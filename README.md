@@ -180,6 +180,6 @@ Wenn `otaUrl` nicht null ist, soll der ESP die Firmware von dieser URL laden und
 
 ## Lizenz
 
-GPL-3.0 © Martin Buchmann
+GNU General Public License v3.0 © MPunktBPunkt — siehe [LICENSE](LICENSE)
 
 [![Donate](https://img.shields.io/badge/Donate-PayPal-00457C.svg?logo=paypal)](https://www.paypal.com/donate/?business=martin%40bchmnn.de&currency_code=EUR)
