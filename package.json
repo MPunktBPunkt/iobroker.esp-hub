@@ -1,0 +1,38 @@
+{
+  "name": "iobroker.esp-hub",
+  "version": "0.1.0",
+  "description": "ioBroker adapter to manage ESP32 and ESP8266 devices – registration, status, IOs and OTA updates",
+  "author": {
+    "name": "Martin Buchmann",
+    "email": "martin@bchmnn.de"
+  },
+  "homepage": "https://github.com/MPunktBPunkt/iobroker.esp-hub",
+  "license": "GPL-3.0",
+  "keywords": [
+    "ioBroker",
+    "esp32",
+    "esp8266",
+    "ota",
+    "wifi",
+    "iot",
+    "hub"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/MPunktBPunkt/iobroker.esp-hub.git"
+  },
+  "bugs": {
+    "url": "https://github.com/MPunktBPunkt/iobroker.esp-hub/issues"
+  },
+  "main": "main.js",
+  "scripts": {
+    "start": "node main.js",
+    "test": "echo \"No tests defined\" && exit 0"
+  },
+  "dependencies": {
+    "@iobroker/adapter-core": "^3.0.0"
+  },
+  "engines": {
+    "node": ">=16"
+  }
+}

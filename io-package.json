@@ -1,0 +1,99 @@
+{
+  "common": {
+    "name": "esp-hub",
+    "version": "0.1.0",
+    "news": {
+      "0.1.0": {
+        "en": "Initial release: ESP32/ESP8266 device management, heartbeat registration, OTA firmware updates, Web-UI",
+        "de": "Erstveröffentlichung: ESP32/ESP8266-Geräteverwaltung, Heartbeat-Registrierung, OTA-Firmware-Updates, Web-UI"
+      }
+    },
+    "title": "ESP-Hub",
+    "titleLang": {
+      "de": "ESP-Hub – ESP32/ESP8266 Manager",
+      "en": "ESP-Hub – ESP32/ESP8266 Manager"
+    },
+    "desc": {
+      "de": "Verwaltet alle ESP32 und ESP8266 Geräte im WLAN: Registrierung, Status, IOs und OTA-Updates.",
+      "en": "Manages all ESP32 and ESP8266 devices in your WiFi network: registration, status, IOs and OTA updates."
+    },
+    "authors": ["Martin Buchmann <martin@bchmnn.de>"],
+    "keywords": ["esp32", "esp8266", "ota", "wifi", "iot", "hub"],
+    "license": "GPL-3.0",
+    "platform": "Node.js",
+    "main": "main.js",
+    "icon": "esp-hub.svg",
+    "enabled": true,
+    "mode": "daemon",
+    "type": "iot-devices",
+    "readyTimeout": 60000,
+    "javascriptThreadType": "worker",
+    "connectionType": "local",
+    "dataSource": "push",
+    "materialize": false,
+    "noConfig": false,
+    "allowInit": false,
+    "adminUI": {
+      "config": "json"
+    },
+    "dependencies": [
+      {
+        "js-controller": ">=5.0.0"
+      }
+    ],
+    "engines": {
+      "node": ">=16"
+    }
+  },
+  "native": {
+    "webPort": 8093,
+    "adapterHost": "192.168.178.1",
+    "heartbeatInterval": 30,
+    "logBuffer": 500,
+    "verbose": false
+  },
+  "instanceObjects": [
+    {
+      "_id": "info",
+      "type": "channel",
+      "common": {
+        "name": "Adapter-Info"
+      },
+      "native": {}
+    },
+    {
+      "_id": "info.connection",
+      "type": "state",
+      "common": {
+        "name": "Adapter verbunden",
+        "type": "boolean",
+        "role": "indicator.connected",
+        "read": true,
+        "write": false,
+        "def": false
+      },
+      "native": {}
+    },
+    {
+      "_id": "info.deviceCount",
+      "type": "state",
+      "common": {
+        "name": "Anzahl registrierter Geräte",
+        "type": "number",
+        "role": "value",
+        "read": true,
+        "write": false,
+        "def": 0
+      },
+      "native": {}
+    },
+    {
+      "_id": "devices",
+      "type": "channel",
+      "common": {
+        "name": "ESP-Geräte"
+      },
+      "native": {}
+    }
+  ]
+}
