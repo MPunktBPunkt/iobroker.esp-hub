@@ -1,0 +1,53 @@
+{
+  "type": "tabs",
+  "items": {
+    "tab_general": {
+      "type": "tab",
+      "label": "Allgemein",
+      "items": {
+        "webPort": {
+          "type": "number",
+          "label": "Web-UI Port",
+          "min": 1,
+          "max": 65535,
+          "default": 8093,
+          "help": "HTTP-Port für das Web-Interface und die ESP-API"
+        },
+        "adapterHost": {
+          "type": "text",
+          "label": "Adapter-Host / ioBroker IP",
+          "default": "192.168.178.1",
+          "help": "IP-Adresse des ioBroker-Hosts, die für die ESPs erreichbar ist (für OTA-URLs)"
+        },
+        "heartbeatInterval": {
+          "type": "number",
+          "label": "Heartbeat-Intervall (Sekunden)",
+          "min": 5,
+          "max": 3600,
+          "default": 30,
+          "help": "Wie oft ESPs ihren Status senden sollen (wird im Heartbeat-Reply mitgeteilt)"
+        }
+      }
+    },
+    "tab_advanced": {
+      "type": "tab",
+      "label": "Erweitert",
+      "items": {
+        "logBuffer": {
+          "type": "number",
+          "label": "Log-Buffer Größe",
+          "min": 50,
+          "max": 5000,
+          "default": 500,
+          "help": "Maximale Anzahl interner Log-Einträge"
+        },
+        "verbose": {
+          "type": "checkbox",
+          "label": "Debug-Logging aktivieren",
+          "default": false,
+          "help": "Aktiviert ausführliche Debug-Ausgaben im Log"
+        }
+      }
+    }
+  }
+}
