@@ -7,7 +7,7 @@ const fs       = require('fs');
 const path     = require('path');
 const { exec } = require('child_process');
 
-const ADAPTER_VERSION = '0.2.0';
+const ADAPTER_VERSION = '0.2.1';
 const NODE_ONLINE_SEC = 120;
 const FIRMWARE_DIR    = '/tmp/iobroker-esphub-fw';
 
@@ -210,33 +210,60 @@ class EspHub extends utils.Adapter {
     // ─── esptool.py Auto-Install ─────────────────────────────────────────
 
     _installEsptool() {
-        // Check if already available
+        // Step 1: Check if already available (esptool.py or python3 -m esptool)
         exec('esptool.py version 2>/dev/null || python3 -m esptool version 2>/dev/null', (err, stdout) => {
-            if (!err && stdout && stdout.includes('esptool')) {
+            if (!err && stdout && stdout.toLowerCase().includes('esptool')) {
                 this.esptoolReady = true;
                 this._log('INFO', 'FLASH', 'esptool.py bereits vorhanden: ' + stdout.split('\n')[0].trim());
                 return;
             }
-            // Not found → install
-            this._log('INFO', 'FLASH', 'esptool.py nicht gefunden, installiere via pip...');
-            exec('pip3 install esptool --break-system-packages 2>&1', { timeout: 120000 }, (err2, out2) => {
-                if (err2) {
-                    this._log('WARN', 'FLASH', 'pip install fehlgeschlagen: ' + (err2.message || ''));
-                    // Try pip as fallback
-                    exec('pip install esptool --break-system-packages 2>&1', { timeout: 120000 }, (err3, out3) => {
-                        if (err3) {
-                            this._log('ERROR', 'FLASH', 'esptool konnte nicht installiert werden. Manuell: pip3 install esptool');
-                        } else {
-                            this.esptoolReady = true;
-                            this._log('INFO', 'FLASH', 'esptool.py erfolgreich installiert (pip).');
-                        }
-                    });
-                } else {
+
+            this._log('INFO', 'FLASH', 'esptool nicht gefunden — versuche Installation...');
+
+            // Step 2: Try apt install python3-esptool (Debian/Ubuntu LXC, no pip needed)
+            exec('apt-get install -y python3-esptool 2>&1', { timeout: 120000 }, (err2, out2) => {
+                if (!err2) {
                     this.esptoolReady = true;
-                    this._log('INFO', 'FLASH', 'esptool.py erfolgreich installiert.');
+                    this._log('INFO', 'FLASH', 'esptool via apt installiert.');
+                    return;
                 }
+                this._log('WARN', 'FLASH', 'apt fehlgeschlagen: ' + (out2 || '').split('\n')[0]);
+
+                // Step 3: Ensure pip3 is present, then install esptool
+                exec('apt-get install -y python3-pip 2>&1', { timeout: 60000 }, () => {
+                    exec('pip3 install esptool --break-system-packages 2>&1', { timeout: 120000 }, (err3, out3) => {
+                        if (!err3) {
+                            this.esptoolReady = true;
+                            this._log('INFO', 'FLASH', 'esptool via pip3 installiert.');
+                            return;
+                        }
+                        this._log('WARN', 'FLASH', 'pip3 fehlgeschlagen: ' + (out3 || '').split('\n')[0]);
+
+                        // Step 4: Try pip without --break-system-packages (older systems)
+                        exec('pip3 install esptool 2>&1', { timeout: 120000 }, (err4, out4) => {
+                            if (!err4) {
+                                this.esptoolReady = true;
+                                this._log('INFO', 'FLASH', 'esptool via pip3 (ohne Flag) installiert.');
+                                return;
+                            }
+                            this._log('ERROR', 'FLASH',
+                                'esptool konnte nicht automatisch installiert werden. ' +
+                                'Bitte manuell: apt install python3-esptool  ODER  pip3 install esptool');
+                        });
+                    });
+                });
             });
         });
+    }
+
+    _getEsptoolCmd() {
+        // Returns the correct esptool command for this system
+        try {
+            require('child_process').execSync('esptool.py version 2>/dev/null', { timeout: 3000 });
+            return 'esptool.py';
+        } catch (e) {
+            return 'python3 -m esptool';
+        }
     }
 
     _getUsbPorts(cb) {
@@ -264,7 +291,8 @@ class EspHub extends utils.Adapter {
 
         const addr  = flashAddr || '0x0';
         const speed = baud      || '460800';
-        const cmd   = 'esptool.py --port ' + port + ' --baud ' + speed +
+        const esptool = this._getEsptoolCmd();
+        const cmd   = esptool + ' --port ' + port + ' --baud ' + speed +
                       ' write_flash ' + addr + ' ' + fpath;
 
         this._log('INFO', 'FLASH', 'Flash-Start: ' + cmd);
@@ -628,7 +656,9 @@ class EspHub extends utils.Adapter {
             };
             addLine('▶ esptool.py --port ' + port + ' chip_id', false);
             const { spawn } = require('child_process');
-            const proc = spawn('esptool.py', ['--port', port, 'chip_id'], { stdio: ['ignore', 'pipe', 'pipe'] });
+            const esptoolCmd = this._getEsptoolCmd();
+            const esptoolParts = (esptoolCmd + ' --port ' + port + ' chip_id').split(' ');
+            const proc = spawn(esptoolParts[0], esptoolParts.slice(1), { stdio: ['ignore', 'pipe', 'pipe'] });
             proc.stdout.on('data', d => String(d).split('\n').forEach(l => { if (l.trim()) addLine(l.trim(), false); }));
             proc.stderr.on('data', d => String(d).split('\n').forEach(l => { if (l.trim()) addLine(l.trim(), true); }));
             proc.on('close', code => {

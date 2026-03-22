@@ -1,6 +1,6 @@
 # iobroker.esp-hub
 
-![Version](https://img.shields.io/badge/version-0.2.0-blue)
+![Version](https://img.shields.io/badge/version-0.2.1-blue)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 [![Donate](https://img.shields.io/badge/Donate-PayPal-00457C.svg?logo=paypal)](https://www.paypal.com/donate/?business=martin%40bchmnn.de&currency_code=EUR)
 
@@ -170,6 +170,10 @@ Wenn `otaUrl` nicht null ist, soll der ESP die Firmware von dieser URL laden und
 ---
 
 ## Changelog
+
+### 0.2.1
+- Bugfix: esptool Auto-Install: apt install python3-esptool → pip3 → pip (Fallback-Kette)
+- Bugfix: python3 -m esptool als Fallback wenn esptool.py nicht im PATH
 
 ### 0.2.0
 - Neu: Tab "Programmieren" — ESP32/ESP8266 direkt via USB flashen

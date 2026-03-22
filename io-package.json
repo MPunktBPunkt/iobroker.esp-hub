@@ -1,7 +1,7 @@
 {
   "common": {
     "name": "esp-hub",
-    "version": "0.2.0",
+    "version": "0.2.1",
     "news": {
       "0.1.0": {
         "en": "Initial release: ESP32/ESP8266 device management, heartbeat registration, OTA firmware updates, Web-UI",
@@ -10,6 +10,10 @@
       "0.2.0": {
         "en": "New: USB programming tab, esptool.py auto-install",
         "de": "Neu: USB-Programmier-Tab, esptool.py Auto-Installation"
+      },
+      "0.2.1": {
+        "en": "Fix: esptool auto-install via apt, pip3+pip fallback chain",
+        "de": "Fix: esptool Auto-Install via apt, pip3+pip Fallback-Kette"
       }
     },
     "title": "ESP-Hub",
