@@ -7,9 +7,10 @@ const fs       = require('fs');
 const path     = require('path');
 const { exec } = require('child_process');
 
-const ADAPTER_VERSION = '0.2.4';
+const ADAPTER_VERSION = '0.2.5';
 const NODE_ONLINE_SEC = 120;
 const FIRMWARE_DIR    = '/tmp/iobroker-esphub-fw';
+const SKETCH_DIR      = '/tmp/iobroker-esphub-sketches';
 
 // ─── Helper ────────────────────────────────────────────────────────────────
 
@@ -22,13 +23,16 @@ function sanitizeMac(mac) {
 class EspHub extends utils.Adapter {
     constructor(options) {
         super({ ...options, name: 'esp-hub' });
-        this.devices       = {};   // MAC → device object
-        this.logs          = [];
-        this.flashLog      = [];   // USB flash terminal output
-        this.esptoolReady  = false;
-        this.flashRunning  = false;
-        this.httpServer    = null;
-        this.pack          = {};
+        this.devices          = {};
+        this.logs             = [];
+        this.flashLog         = [];
+        this.flashRunning     = false;
+        this.esptoolReady     = false;
+        this.compileLog       = [];
+        this.compileRunning   = false;
+        this.arduinoCliReady  = false;
+        this.httpServer       = null;
+        this.pack             = {};
         try { this.pack = require('./package.json'); } catch (e) { /* ignore */ }
 
         this.on('ready',  this.onReady.bind(this));
@@ -54,12 +58,12 @@ class EspHub extends utils.Adapter {
 
     async onReady() {
         try {
-            if (!fs.existsSync(FIRMWARE_DIR)) {
-                fs.mkdirSync(FIRMWARE_DIR, { recursive: true });
-            }
+            if (!fs.existsSync(FIRMWARE_DIR)) fs.mkdirSync(FIRMWARE_DIR, { recursive: true });
+            if (!fs.existsSync(SKETCH_DIR))   fs.mkdirSync(SKETCH_DIR,   { recursive: true });
             await this.setStateAsync('info.connection', true, true);
             await this._restoreDevices();
-            this._installEsptool();   // async, non-blocking
+            this._installEsptool();
+            this._installArduinoCli();
             this._startServer();
             this._log('INFO', 'SYSTEM', 'ESP-Hub v' + (this.pack.version || ADAPTER_VERSION) +
                 ' gestartet — Port ' + (this.config.webPort || 8093));
@@ -205,6 +209,155 @@ class EspHub extends utils.Adapter {
         }
 
         return reply;
+    }
+
+    // ─── arduino-cli ─────────────────────────────────────────────────────
+
+    _getArduinoCliCmd() {
+        const candidates = [
+            'arduino-cli',
+            process.env.HOME + '/.local/bin/arduino-cli',
+            '/root/.local/bin/arduino-cli',
+            '/home/iobroker/.local/bin/arduino-cli'
+        ];
+        for (const c of candidates) {
+            try {
+                require('child_process').execSync(c + ' version 2>/dev/null', { timeout: 3000 });
+                return c;
+            } catch (e) { /* try next */ }
+        }
+        return null;
+    }
+
+    _installArduinoCli() {
+        const self = this;
+        const cmd  = self._getArduinoCliCmd();
+        if (cmd) {
+            self.arduinoCliReady = true;
+            self._log('INFO', 'COMPILE', 'arduino-cli bereits vorhanden: ' + cmd);
+            return;
+        }
+        self._log('INFO', 'COMPILE', 'arduino-cli nicht gefunden — installiere...');
+        const binDir = (process.env.HOME || '/root') + '/.local/bin';
+        if (!fs.existsSync(binDir)) fs.mkdirSync(binDir, { recursive: true });
+
+        const dlCmd = 'curl -fsSL https://downloads.arduino.cc/arduino-cli/arduino-cli_latest_Linux_64bit.tar.gz' +
+                      ' | tar xz -C ' + binDir + ' arduino-cli 2>&1';
+        exec(dlCmd, { timeout: 120000 }, (err, out) => {
+            if (err) {
+                self._log('WARN', 'COMPILE', 'Download fehlgeschlagen: ' + (out || err.message).split('\n')[0]);
+                // Fallback: apt
+                exec('sudo -n apt-get install -y arduino-cli 2>&1', { timeout: 120000 }, (err2) => {
+                    if (!err2 && self._getArduinoCliCmd()) {
+                        self.arduinoCliReady = true;
+                        self._log('INFO', 'COMPILE', 'arduino-cli via apt installiert.');
+                    } else {
+                        self._log('ERROR', 'COMPILE', 'arduino-cli Installation fehlgeschlagen.');
+                    }
+                });
+                return;
+            }
+            if (self._getArduinoCliCmd()) {
+                self.arduinoCliReady = true;
+                self._log('INFO', 'COMPILE', 'arduino-cli installiert.');
+                self._initArduinoConfig();
+            } else {
+                self._log('ERROR', 'COMPILE', 'arduino-cli Binary nach Download nicht gefunden.');
+            }
+        });
+    }
+
+    _initArduinoConfig() {
+        const cli = this._getArduinoCliCmd();
+        if (!cli) return;
+        // Init config + add ESP board URLs
+        const initCmd = cli + ' config init --overwrite 2>&1 && ' +
+            cli + ' config add board_manager.additional_urls ' +
+            'https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json ' +
+            'https://arduino.esp8266.com/stable/package_esp8266com_index.json 2>&1 && ' +
+            cli + ' core update-index 2>&1';
+        exec(initCmd, { timeout: 60000 }, (err, out) => {
+            if (err) this._log('WARN', 'COMPILE', 'Config-Init Fehler: ' + (out || '').split('\n')[0]);
+            else this._log('INFO', 'COMPILE', 'arduino-cli Konfiguration initialisiert.');
+        });
+    }
+
+    _listSketches() {
+        try {
+            return fs.readdirSync(SKETCH_DIR)
+                .filter(d => {
+                    const p = path.join(SKETCH_DIR, d);
+                    return fs.statSync(p).isDirectory() &&
+                           fs.existsSync(path.join(p, d + '.ino'));
+                })
+                .map(d => {
+                    const inoPath = path.join(SKETCH_DIR, d, d + '.ino');
+                    const s = fs.statSync(inoPath);
+                    return { name: d, size: s.size, date: s.mtime.toISOString() };
+                })
+                .sort((a, b) => b.date.localeCompare(a.date));
+        } catch (e) { return []; }
+    }
+
+    _compileSketch(sketchName, fqbn, cb) {
+        if (this.compileRunning) { cb(new Error('Kompilierung läuft bereits')); return; }
+        const sketchPath = path.join(SKETCH_DIR, sketchName);
+        if (!fs.existsSync(sketchPath)) { cb(new Error('Sketch nicht gefunden: ' + sketchName)); return; }
+        const cli = this._getArduinoCliCmd();
+        if (!cli) { cb(new Error('arduino-cli nicht verfügbar')); return; }
+
+        this.compileRunning = true;
+        this.compileLog = [];
+        const outDir = path.join(SKETCH_DIR, sketchName + '_build');
+        if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
+
+        const addLine = (line, isErr) => {
+            const entry = { ts: new Date().toISOString(), line, err: isErr || false };
+            this.compileLog.unshift(entry);
+            if (this.compileLog.length > 300) this.compileLog.pop();
+        };
+
+        const cmd = cli + ' compile --fqbn ' + fqbn + ' --output-dir ' + outDir + ' ' + sketchPath;
+        addLine('▶ ' + cmd, false);
+        this._log('INFO', 'COMPILE', 'Starte Kompilierung: ' + sketchName + ' [' + fqbn + ']');
+
+        const { spawn } = require('child_process');
+        const parts = cmd.split(' ');
+        const proc  = spawn(parts[0], parts.slice(1), { stdio: ['ignore', 'pipe', 'pipe'] });
+
+        proc.stdout.on('data', d => String(d).split('\n').forEach(l => { if (l.trim()) addLine(l.trim(), false); }));
+        proc.stderr.on('data', d => String(d).split('\n').forEach(l => { if (l.trim()) addLine(l.trim(), l.includes('error') || l.includes('Error')); }));
+
+        proc.on('close', code => {
+            this.compileRunning = false;
+            if (code === 0) {
+                // Find .bin and copy to FIRMWARE_DIR
+                try {
+                    const files = fs.readdirSync(outDir).filter(f => f.endsWith('.bin'));
+                    if (files.length > 0) {
+                        const src  = path.join(outDir, files[0]);
+                        const dest = path.join(FIRMWARE_DIR, sketchName + '.bin');
+                        fs.copyFileSync(src, dest);
+                        addLine('✅ Kompilierung erfolgreich! → ' + sketchName + '.bin', false);
+                        this._log('INFO', 'COMPILE', 'Kompilierung OK: ' + sketchName + '.bin');
+                    } else {
+                        addLine('⚠️ Kompilierung OK aber keine .bin Datei gefunden.', true);
+                    }
+                } catch (e) {
+                    addLine('⚠️ Konnte .bin nicht kopieren: ' + e.message, true);
+                }
+                cb(null);
+            } else {
+                addLine('❌ Kompilierung fehlgeschlagen (Exit ' + code + ')', true);
+                this._log('ERROR', 'COMPILE', 'Kompilierung fehlgeschlagen: Exit ' + code);
+                cb(new Error('Exit ' + code));
+            }
+        });
+        proc.on('error', e => {
+            this.compileRunning = false;
+            addLine('❌ ' + e.message, true);
+            cb(e);
+        });
     }
 
     // ─── esptool.py Auto-Install ─────────────────────────────────────────
@@ -710,6 +863,112 @@ class EspHub extends utils.Adapter {
             return;
         }
 
+        // ── Arduino-CLI Status ──
+        if (url === '/api/arduino-status') {
+            json({ ready: this.arduinoCliReady, cmd: this._getArduinoCliCmd() || '' });
+            return;
+        }
+
+        // ── Arduino-CLI Install (trigger) ──
+        if (url === '/api/arduino-install' && req.method === 'POST') {
+            if (this.arduinoCliReady) { json({ ok: true, message: 'Bereits installiert.' }); return; }
+            this.compileLog = [];
+            json({ ok: true, message: 'Installation gestartet...' });
+            this._installArduinoCli();
+            return;
+        }
+
+        // ── Board core install ──
+        if (url === '/api/board-install' && req.method === 'POST') {
+            const body = await readBody();
+            let data = {};
+            try { data = JSON.parse(body.toString()); } catch (e) { /* ignore */ }
+            const platform = (data.platform || '').replace(/[^a-z0-9:]/gi, '');
+            if (!platform) { json({ ok: false, error: 'platform erforderlich (z.B. esp32:esp32)' }); return; }
+            const cli = this._getArduinoCliCmd();
+            if (!cli) { json({ ok: false, error: 'arduino-cli nicht verfügbar' }); return; }
+            const addLine = (line, isErr) => { this.compileLog.unshift({ ts: new Date().toISOString(), line, err: isErr || false }); };
+            this.compileLog = [];
+            this.compileRunning = true;
+            addLine('▶ ' + cli + ' core install ' + platform, false);
+            json({ ok: true, message: 'Board-Installation gestartet...' });
+            exec(cli + ' core install ' + platform + ' 2>&1', { timeout: 300000 }, (err, out) => {
+                this.compileRunning = false;
+                (out || '').split('\n').forEach(l => { if (l.trim()) addLine(l.trim(), false); });
+                if (err) {
+                    addLine('❌ Fehler: ' + err.message, true);
+                    this._log('ERROR', 'COMPILE', 'Board-Install fehlgeschlagen: ' + platform);
+                } else {
+                    addLine('✅ Board-Paket installiert: ' + platform, false);
+                    this._log('INFO', 'COMPILE', 'Board-Paket installiert: ' + platform);
+                }
+            });
+            return;
+        }
+
+        // ── Sketch upload ──
+        if (url === '/api/sketch-upload' && req.method === 'POST') {
+            const ct   = req.headers['content-type'] || '';
+            const bm   = ct.match(/boundary=(.+)/);
+            if (!bm) { json({ ok: false, error: 'Missing boundary' }); return; }
+            const body  = await readBody();
+            const parts = this._parseMultipart(body, bm[1].trim());
+            const file  = parts.find(p => p.filename && p.filename.endsWith('.ino'));
+            if (!file) { json({ ok: false, error: 'Keine .ino Datei gefunden' }); return; }
+            const baseName = path.basename(file.filename, '.ino').replace(/[^a-zA-Z0-9_-]/g, '_');
+            const skDir    = path.join(SKETCH_DIR, baseName);
+            if (!fs.existsSync(skDir)) fs.mkdirSync(skDir, { recursive: true });
+            fs.writeFileSync(path.join(skDir, baseName + '.ino'), file.data);
+            this._log('INFO', 'COMPILE', 'Sketch hochgeladen: ' + baseName + '.ino');
+            json({ ok: true, name: baseName, size: file.data.length });
+            return;
+        }
+
+        // ── Sketch list ──
+        if (url === '/api/sketches') {
+            json(this._listSketches());
+            return;
+        }
+
+        // ── Sketch delete ──
+        if (url === '/api/sketch-delete' && req.method === 'POST') {
+            const body = await readBody();
+            let data = {};
+            try { data = JSON.parse(body.toString()); } catch (e) { /* ignore */ }
+            const name = (data.name || '').replace(/[^a-zA-Z0-9_-]/g, '');
+            if (!name) { json({ ok: false, error: 'name erforderlich' }); return; }
+            const skDir = path.join(SKETCH_DIR, name);
+            if (fs.existsSync(skDir)) {
+                exec('rm -rf ' + skDir, () => {});
+                this._log('INFO', 'COMPILE', 'Sketch gelöscht: ' + name);
+                json({ ok: true });
+            } else { json({ ok: false, error: 'Nicht gefunden' }); }
+            return;
+        }
+
+        // ── Compile ──
+        if (url === '/api/compile' && req.method === 'POST') {
+            const body = await readBody();
+            let data = {};
+            try { data = JSON.parse(body.toString()); } catch (e) { /* ignore */ }
+            const sketchName = (data.sketch || '').replace(/[^a-zA-Z0-9_-]/g, '');
+            const fqbn       = (data.fqbn   || '').replace(/[^a-zA-Z0-9:_-]/g, '');
+            if (!sketchName) { json({ ok: false, error: 'sketch erforderlich' }); return; }
+            if (!fqbn)       { json({ ok: false, error: 'fqbn erforderlich' }); return; }
+            if (!this.arduinoCliReady) { json({ ok: false, error: 'arduino-cli nicht verfügbar' }); return; }
+            if (this.compileRunning)   { json({ ok: false, error: 'Kompilierung läuft bereits' }); return; }
+            this.compileLog = [];
+            json({ ok: true, message: 'Kompilierung gestartet...' });
+            this._compileSketch(sketchName, fqbn, () => {});
+            return;
+        }
+
+        // ── Compile Log ──
+        if (url === '/api/compile-log') {
+            json({ log: this.compileLog.slice(0, 300), running: this.compileRunning });
+            return;
+        }
+
         res.writeHead(404, { 'Content-Type': 'text/plain' });
         res.end('Not found: ' + url);
     }
@@ -827,8 +1086,9 @@ class EspHub extends utils.Adapter {
             '<div class="tabs">',
             '  <div class="tab active" data-tab="devices">&#128267; Ger&auml;te</div>',
             '  <div class="tab" data-tab="flash">&#128268; Programmieren</div>',
+            '  <div class="tab" data-tab="compile">&#9881;&#65039; Kompilieren</div>',
             '  <div class="tab" data-tab="logs">&#128203; Logs</div>',
-            '  <div class="tab" data-tab="system">&#9881;&#65039; System</div>',
+            '  <div class="tab" data-tab="system">&#128295; System</div>',
             '</div>',
 
             // ── Devices Panel ──
@@ -898,6 +1158,55 @@ class EspHub extends utils.Adapter {
             '      <tr><td>Chip-Treiber</td><td style="font-size:12px">CP2102 (cp210x) · CH340 (ch341) · FTDI (ftdi_sio)</td></tr>',
             '      <tr><td>Flash-Adresse</td><td style="font-size:12px">ESP32: 0x0 &nbsp;|&nbsp; ESP8266: 0x0</td></tr>',
             '    </table>',
+            '  </div>',
+            '</div>',
+
+            // ── Compile Panel ──
+            '<div class="panel" id="panel-compile">',
+            '  <div class="card">',
+            '    <h3>&#9881;&#65039; arduino-cli Status</h3>',
+            '    <div id="ac-status" class="esptool-badge esptool-err">&#10007; arduino-cli wird gepr&uuml;ft...</div>',
+            '    <div id="ac-hint" style="display:none;margin-top:10px;background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:10px 14px;font-size:12px;color:var(--muted)">',
+            '      arduino-cli wird automatisch installiert wenn der Tab ge&ouml;ffnet wird.<br>',
+            '      Manuell: <code style="color:var(--accent)">curl -fsSL https://downloads.arduino.cc/arduino-cli/arduino-cli_latest_Linux_64bit.tar.gz | tar xz -C ~/.local/bin</code>',
+            '    </div>',
+            '    <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">',
+            '      <button class="btn btn-sm btn-blue" id="ac-install-btn">&#8635; Neu installieren</button>',
+            '      <button class="btn btn-sm" id="ac-esp32-btn">+ ESP32 Board-Paket</button>',
+            '      <button class="btn btn-sm" id="ac-esp8266-btn">+ ESP8266 Board-Paket</button>',
+            '    </div>',
+            '  </div>',
+            '  <div class="card">',
+            '    <h3>&#128190; Sketch (.ino) hochladen</h3>',
+            '    <div class="upload-area" id="ino-upload-area">&#128196; <b>.ino</b> Sketch hierher ziehen oder klicken</div>',
+            '    <input type="file" id="ino-input" accept=".ino" style="display:none">',
+            '  </div>',
+            '  <div class="card">',
+            '    <h3>&#9889; Kompilieren</h3>',
+            '    <div class="flash-row">',
+            '      <label>Sketch</label>',
+            '      <select id="cp-sketch"><option value="">-- Sketch ausw&auml;hlen --</option></select>',
+            '      <button class="btn btn-sm btn-red" id="cp-del-btn">&#128465; L&ouml;schen</button>',
+            '    </div>',
+            '    <div class="flash-row">',
+            '      <label>Board</label>',
+            '      <select id="cp-board">',
+            '        <option value="esp32:esp32:esp32">ESP32 Dev Module</option>',
+            '        <option value="esp32:esp32:esp32s3">ESP32-S3 Dev Module</option>',
+            '        <option value="esp32:esp32:esp32c3">ESP32-C3 Dev Module</option>',
+            '        <option value="esp32:esp32:esp32s2">ESP32-S2 Dev Module</option>',
+            '        <option value="esp8266:esp8266:nodemcuv2">NodeMCU 1.0 (ESP8266)</option>',
+            '        <option value="esp8266:esp8266:d1_mini">Wemos D1 Mini (ESP8266)</option>',
+            '      </select>',
+            '    </div>',
+            '    <div style="display:flex;gap:10px;align-items:center;margin-bottom:12px">',
+            '      <button class="btn btn-green" id="cp-btn" disabled>&#9889; Kompilieren</button>',
+            '      <button class="btn btn-sm" id="cp-clear-btn">Terminal leeren</button>',
+            '      <span id="cp-status" style="font-size:12px;color:var(--muted)"></span>',
+            '    </div>',
+            '    <div class="flash-term" id="compile-term">',
+            '      <div class="ft-line ft-dim">Bereit. Sketch hochladen und Board ausw&auml;hlen.</div>',
+            '    </div>',
             '  </div>',
             '</div>',
 
@@ -974,6 +1283,7 @@ class EspHub extends utils.Adapter {
             '    var p=document.getElementById("panel-"+t.dataset.tab);',
             '    if(p)p.classList.add("active");',
             '    if(t.dataset.tab==="flash"){loadPorts();loadFlashFirmwares();}',
+            '    if(t.dataset.tab==="compile"){loadArduinoStatus();loadSketches();loadFlashFirmwares();}',
             '  });',
             '});',
             '',
@@ -1322,6 +1632,163 @@ class EspHub extends utils.Adapter {
             '  var term=document.getElementById("flash-term");',
             '  if(term)term.innerHTML=\'<div class="ft-line ft-dim">Terminal geleert.</div>\';',
             '});',
+            '',
+            '// ── Compile / arduino-cli ─────────────────────────',
+            'var sketches=[], compilePolling=null;',
+            '',
+            'function loadArduinoStatus(){',
+            '  fetch("/api/arduino-status").then(function(r){return r.json();}).then(function(d){',
+            '    var badge=document.getElementById("ac-status");',
+            '    var hint=document.getElementById("ac-hint");',
+            '    var btn=document.getElementById("cp-btn");',
+            '    if(d.ready){',
+            '      if(badge){badge.className="esptool-badge esptool-ok";badge.innerHTML="&#10003; arduino-cli verf\\u00fcgbar"+(d.cmd?" ("+d.cmd+")");}',
+            '      if(hint)hint.style.display="none";',
+            '      if(btn)btn.disabled=false;',
+            '    } else {',
+            '      if(badge){badge.className="esptool-badge esptool-err";badge.innerHTML="&#10007; arduino-cli nicht verf\\u00fcgbar";}',
+            '      if(hint)hint.style.display="block";',
+            '      if(btn)btn.disabled=true;',
+            '    }',
+            '  }).catch(function(){});',
+            '}',
+            '',
+            'function loadSketches(){',
+            '  fetch("/api/sketches").then(function(r){return r.json();}).then(function(list){',
+            '    sketches=list;',
+            '    var sel=document.getElementById("cp-sketch");',
+            '    if(!sel)return;',
+            '    var cur=sel.value;',
+            '    sel.innerHTML=\'<option value="">-- Sketch ausw\\u00e4hlen --</option>\';',
+            '    list.forEach(function(s){sel.innerHTML+=\'<option value="\'+esc(s.name)+\'">\'+esc(s.name)+\' (\'+fmtSize(s.size)+\')</option>\';});',
+            '    if(cur)sel.value=cur;',
+            '  }).catch(function(){});',
+            '}',
+            '',
+            'function pollCompileLog(doneCb){',
+            '  fetch("/api/compile-log").then(function(r){return r.json();}).then(function(d){',
+            '    var term=document.getElementById("compile-term");',
+            '    var st=document.getElementById("cp-status");',
+            '    var btn=document.getElementById("cp-btn");',
+            '    if(term){',
+            '      term.innerHTML="";',
+            '      d.log.slice().reverse().forEach(function(e){',
+            '        var div=document.createElement("div");',
+            '        div.className="ft-line"+(e.err?" ft-err":(e.line&&(e.line.startsWith("\\u2705")||e.line.includes("erfolgreich"))?" ft-ok":""));',
+            '        div.textContent=e.line;',
+            '        term.insertBefore(div,term.firstChild);',
+            '      });',
+            '    }',
+            '    if(d.running){',
+            '      if(st)st.textContent="\\u23F3 Kompiliere...";',
+            '      compilePolling=setTimeout(function(){pollCompileLog(doneCb);},1000);',
+            '    } else {',
+            '      if(st)st.textContent="Fertig";',
+            '      if(btn)btn.disabled=false;',
+            '      compilePolling=null;',
+            '      loadFlashFirmwares();',
+            '      if(doneCb)doneCb();',
+            '    }',
+            '  }).catch(function(){compilePolling=setTimeout(function(){pollCompileLog(doneCb);},2000);});',
+            '}',
+            '',
+            'document.getElementById("cp-btn").addEventListener("click",function(){',
+            '  var sk=document.getElementById("cp-sketch").value;',
+            '  var bd=document.getElementById("cp-board").value;',
+            '  if(!sk){alert("Bitte Sketch ausw\\u00e4hlen!");return;}',
+            '  if(!bd){alert("Bitte Board ausw\\u00e4hlen!");return;}',
+            '  var btn=document.getElementById("cp-btn");',
+            '  var st=document.getElementById("cp-status");',
+            '  var term=document.getElementById("compile-term");',
+            '  btn.disabled=true;',
+            '  if(st)st.textContent="\\u23F3 Starte...";',
+            '  if(term)term.innerHTML="";',
+            '  fetch("/api/compile",{method:"POST",headers:{"Content-Type":"application/json"},',
+            '    body:JSON.stringify({sketch:sk,fqbn:bd})})',
+            '  .then(function(r){return r.json();})',
+            '  .then(function(res){',
+            '    if(!res.ok){',
+            '      var div=document.createElement("div");',
+            '      div.className="ft-line ft-err";div.textContent="\\u274C "+res.error;',
+            '      if(term)term.insertBefore(div,term.firstChild);',
+            '      btn.disabled=false;if(st)st.textContent="Fehler";return;',
+            '    }',
+            '    pollCompileLog();',
+            '  }).catch(function(e){btn.disabled=false;if(st)st.textContent="Fehler: "+e;});',
+            '});',
+            '',
+            'document.getElementById("cp-del-btn").addEventListener("click",function(){',
+            '  var sk=document.getElementById("cp-sketch").value;',
+            '  if(!sk){alert("Bitte Sketch ausw\\u00e4hlen!");return;}',
+            '  if(!confirm("Sketch "+sk+" l\\u00f6schen?"))return;',
+            '  fetch("/api/sketch-delete",{method:"POST",headers:{"Content-Type":"application/json"},',
+            '    body:JSON.stringify({name:sk})})',
+            '  .then(function(){loadSketches();}).catch(function(){});',
+            '});',
+            '',
+            'document.getElementById("cp-clear-btn").addEventListener("click",function(){',
+            '  var term=document.getElementById("compile-term");',
+            '  if(term)term.innerHTML=\'<div class="ft-line ft-dim">Terminal geleert.</div>\';',
+            '});',
+            '',
+            'document.getElementById("ac-install-btn").addEventListener("click",function(){',
+            '  if(!confirm("arduino-cli neu installieren?"))return;',
+            '  fetch("/api/arduino-install",{method:"POST"}).then(function(){',
+            '    setTimeout(loadArduinoStatus,5000);',
+            '    setTimeout(loadArduinoStatus,15000);',
+            '    setTimeout(loadArduinoStatus,30000);',
+            '  });',
+            '});',
+            '',
+            'document.getElementById("ac-esp32-btn").addEventListener("click",function(){',
+            '  var term=document.getElementById("compile-term");',
+            '  if(term)term.innerHTML="";',
+            '  fetch("/api/board-install",{method:"POST",headers:{"Content-Type":"application/json"},',
+            '    body:JSON.stringify({platform:"esp32:esp32"})})',
+            '  .then(function(){pollCompileLog();});',
+            '});',
+            '',
+            'document.getElementById("ac-esp8266-btn").addEventListener("click",function(){',
+            '  var term=document.getElementById("compile-term");',
+            '  if(term)term.innerHTML="";',
+            '  fetch("/api/board-install",{method:"POST",headers:{"Content-Type":"application/json"},',
+            '    body:JSON.stringify({platform:"esp8266:esp8266"})})',
+            '  .then(function(){pollCompileLog();});',
+            '});',
+            '',
+            '// ── .ino Upload ───────────────────────────────────',
+            '(function(){',
+            '  var inp=document.getElementById("ino-input");',
+            '  var area=document.getElementById("ino-upload-area");',
+            '  if(!inp||!area)return;',
+            '  area.addEventListener("click",function(){inp.click();});',
+            '  inp.addEventListener("change",function(){',
+            '    if(!inp.files.length)return;uploadIno(inp.files[0]);inp.value="";',
+            '  });',
+            '  area.addEventListener("dragover",function(e){e.preventDefault();area.classList.add("drag");});',
+            '  area.addEventListener("dragleave",function(){area.classList.remove("drag");});',
+            '  area.addEventListener("drop",function(e){',
+            '    e.preventDefault();area.classList.remove("drag");',
+            '    var f=e.dataTransfer.files[0];',
+            '    if(!f||!f.name.endsWith(".ino")){alert("Nur .ino Dateien!");return;}',
+            '    uploadIno(f);',
+            '  });',
+            '})();',
+            'function uploadIno(file){',
+            '  var area=document.getElementById("ino-upload-area");',
+            '  if(area)area.textContent="\\u23F3 Lade hoch: "+file.name;',
+            '  var fd=new FormData();fd.append("sketch",file);',
+            '  fetch("/api/sketch-upload",{method:"POST",body:fd})',
+            '  .then(function(r){return r.json();})',
+            '  .then(function(res){',
+            '    if(area)area.innerHTML=\'&#128196; <b>.ino</b> Sketch hierher ziehen oder klicken\';',
+            '    if(res.ok){loadSketches();var sel=document.getElementById("cp-sketch");setTimeout(function(){if(sel)sel.value=res.name;},200);}',
+            '    else alert("Upload-Fehler: "+res.error);',
+            '  }).catch(function(e){',
+            '    if(area)area.innerHTML=\'&#128196; <b>.ino</b> Sketch hierher ziehen oder klicken\';',
+            '    alert("Fehler: "+e);',
+            '  });',
+            '}',
             '',
             'document.getElementById("upd-btn").addEventListener("click",function(){',
             '  if(!confirm("Adapter aktualisieren und neu starten?"))return;',
