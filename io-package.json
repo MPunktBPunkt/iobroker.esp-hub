@@ -1,7 +1,7 @@
 {
   "common": {
     "name": "esp-hub",
-    "version": "0.2.7",
+    "version": "0.2.8",
     "news": {
       "0.1.0": {
         "en": "Initial release: ESP32/ESP8266 device management, heartbeat registration, OTA firmware updates, Web-UI",
@@ -38,6 +38,10 @@
       "0.2.7": {
         "en": "Add Wemos D1 Mini ESP32 board, 921600 baud as default",
         "de": "Wemos D1 Mini ESP32 ergänzt, 921600 Baud als Standard"
+      },
+      "0.2.8": {
+        "en": "New: Bundled firmware esp-hub-base v1.2.0 for Wemos D1 Mini ESP32 — ready to flash out of the box",
+        "de": "Neu: Standard-Firmware esp-hub-base v1.2.0 für Wemos D1 Mini ESP32 direkt mitgeliefert"
       }
     },
     "title": "ESP-Hub",

@@ -7,7 +7,7 @@ const fs       = require('fs');
 const path     = require('path');
 const { exec } = require('child_process');
 
-const ADAPTER_VERSION = '0.2.7';
+const ADAPTER_VERSION = '0.2.8';
 const NODE_ONLINE_SEC = 120;
 const FIRMWARE_DIR    = '/tmp/iobroker-esphub-fw';
 const SKETCH_DIR      = '/tmp/iobroker-esphub-sketches';
@@ -60,6 +60,7 @@ class EspHub extends utils.Adapter {
         try {
             if (!fs.existsSync(FIRMWARE_DIR)) fs.mkdirSync(FIRMWARE_DIR, { recursive: true });
             if (!fs.existsSync(SKETCH_DIR))   fs.mkdirSync(SKETCH_DIR,   { recursive: true });
+            this._copyBundledFirmwares();
             await this.setStateAsync('info.connection', true, true);
             await this._restoreDevices();
             this._installEsptool();
@@ -209,6 +210,25 @@ class EspHub extends utils.Adapter {
         }
 
         return reply;
+    }
+
+    // ─── Bundled Firmware ────────────────────────────────────────────────
+
+    _copyBundledFirmwares() {
+        try {
+            const bundleDir = path.join(__dirname, 'firmware');
+            if (!fs.existsSync(bundleDir)) return;
+            const files = fs.readdirSync(bundleDir).filter(f => f.endsWith('.bin'));
+            for (const f of files) {
+                const dest = path.join(FIRMWARE_DIR, f);
+                if (!fs.existsSync(dest)) {
+                    fs.copyFileSync(path.join(bundleDir, f), dest);
+                    this._log('INFO', 'SYSTEM', 'Standard-Firmware bereitgestellt: ' + f);
+                }
+            }
+        } catch (e) {
+            this._log('WARN', 'SYSTEM', 'Bundled Firmware konnte nicht kopiert werden: ' + e.message);
+        }
     }
 
     // ─── arduino-cli ─────────────────────────────────────────────────────
