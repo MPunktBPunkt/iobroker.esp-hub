@@ -7,7 +7,7 @@ const fs       = require('fs');
 const path     = require('path');
 const { exec } = require('child_process');
 
-const ADAPTER_VERSION = '0.2.6';
+const ADAPTER_VERSION = '0.2.7';
 const NODE_ONLINE_SEC = 120;
 const FIRMWARE_DIR    = '/tmp/iobroker-esphub-fw';
 const SKETCH_DIR      = '/tmp/iobroker-esphub-sketches';
@@ -1135,10 +1135,12 @@ class EspHub extends utils.Adapter {
             '      <input id="fl-addr" value="0x0" style="width:100px">',
             '      <label style="margin-left:16px">Baud</label>',
             '      <select id="fl-baud" style="width:120px">',
-            '        <option value="460800">460800</option>',
             '        <option value="921600">921600</option>',
-            '        <option value="115200">115200</option>',
+            '        <option value="460800">460800</option>',
             '        <option value="230400">230400</option>',
+            '        <option value="115200">115200</option>',
+            '        <option value="256000">256000</option>',
+            '        <option value="512000">512000</option>',
             '      </select>',
             '    </div>',
             '    <div style="display:flex;gap:10px;align-items:center;margin-bottom:14px">',
@@ -1191,6 +1193,7 @@ class EspHub extends utils.Adapter {
             '    <div class="flash-row">',
             '      <label>Board</label>',
             '      <select id="cp-board">',
+            '        <option value="esp32:esp32:d1_mini32">Wemos D1 Mini ESP32</option>',
             '        <option value="esp32:esp32:esp32">ESP32 Dev Module</option>',
             '        <option value="esp32:esp32:esp32s3">ESP32-S3 Dev Module</option>',
             '        <option value="esp32:esp32:esp32c3">ESP32-C3 Dev Module</option>',

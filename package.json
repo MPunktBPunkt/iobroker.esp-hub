@@ -1,6 +1,6 @@
 {
   "name": "iobroker.esp-hub",
-  "version": "0.2.6",
+  "version": "0.2.7",
   "description": "ioBroker adapter to manage ESP32 and ESP8266 devices – registration, status, IOs and OTA updates",
   "author": {
     "name": "Martin Buchmann",
