@@ -7,7 +7,7 @@ const fs       = require('fs');
 const path     = require('path');
 const { exec } = require('child_process');
 
-const ADAPTER_VERSION = '0.2.1';
+const ADAPTER_VERSION = '0.2.2';
 const NODE_ONLINE_SEC = 120;
 const FIRMWARE_DIR    = '/tmp/iobroker-esphub-fw';
 
@@ -210,18 +210,18 @@ class EspHub extends utils.Adapter {
     // ─── esptool.py Auto-Install ─────────────────────────────────────────
 
     _installEsptool() {
-        // Step 1: Check if already available (esptool.py or python3 -m esptool)
+        // Step 1: Check if already available
         exec('esptool.py version 2>/dev/null || python3 -m esptool version 2>/dev/null', (err, stdout) => {
             if (!err && stdout && stdout.toLowerCase().includes('esptool')) {
                 this.esptoolReady = true;
-                this._log('INFO', 'FLASH', 'esptool.py bereits vorhanden: ' + stdout.split('\n')[0].trim());
+                this._log('INFO', 'FLASH', 'esptool bereits vorhanden: ' + stdout.split('\n')[0].trim());
                 return;
             }
 
             this._log('INFO', 'FLASH', 'esptool nicht gefunden — versuche Installation...');
 
-            // Step 2: Try apt install python3-esptool (Debian/Ubuntu LXC, no pip needed)
-            exec('apt-get install -y python3-esptool 2>&1', { timeout: 120000 }, (err2, out2) => {
+            // Step 2: sudo apt install python3-esptool (bevorzugt, kein pip nötig)
+            exec('sudo -n apt-get install -y python3-esptool 2>&1', { timeout: 120000 }, (err2, out2) => {
                 if (!err2) {
                     this.esptoolReady = true;
                     this._log('INFO', 'FLASH', 'esptool via apt installiert.');
@@ -229,27 +229,25 @@ class EspHub extends utils.Adapter {
                 }
                 this._log('WARN', 'FLASH', 'apt fehlgeschlagen: ' + (out2 || '').split('\n')[0]);
 
-                // Step 3: Ensure pip3 is present, then install esptool
-                exec('apt-get install -y python3-pip 2>&1', { timeout: 60000 }, () => {
-                    exec('pip3 install esptool --break-system-packages 2>&1', { timeout: 120000 }, (err3, out3) => {
-                        if (!err3) {
+                // Step 3: sudo pip3 install esptool
+                exec('sudo -n pip3 install esptool 2>&1', { timeout: 120000 }, (err3, out3) => {
+                    if (!err3) {
+                        this.esptoolReady = true;
+                        this._log('INFO', 'FLASH', 'esptool via sudo pip3 installiert.');
+                        return;
+                    }
+                    this._log('WARN', 'FLASH', 'sudo pip3 fehlgeschlagen: ' + (out3 || '').split('\n')[0]);
+
+                    // Step 4: pip3 --user (kein sudo nötig, installiert ins Home-Verzeichnis)
+                    exec('pip3 install esptool --user 2>&1', { timeout: 120000 }, (err4, out4) => {
+                        if (!err4) {
                             this.esptoolReady = true;
-                            this._log('INFO', 'FLASH', 'esptool via pip3 installiert.');
+                            this._log('INFO', 'FLASH', 'esptool via pip3 --user installiert.');
                             return;
                         }
-                        this._log('WARN', 'FLASH', 'pip3 fehlgeschlagen: ' + (out3 || '').split('\n')[0]);
-
-                        // Step 4: Try pip without --break-system-packages (older systems)
-                        exec('pip3 install esptool 2>&1', { timeout: 120000 }, (err4, out4) => {
-                            if (!err4) {
-                                this.esptoolReady = true;
-                                this._log('INFO', 'FLASH', 'esptool via pip3 (ohne Flag) installiert.');
-                                return;
-                            }
-                            this._log('ERROR', 'FLASH',
-                                'esptool konnte nicht automatisch installiert werden. ' +
-                                'Bitte manuell: apt install python3-esptool  ODER  pip3 install esptool');
-                        });
+                        this._log('ERROR', 'FLASH',
+                            'esptool konnte nicht automatisch installiert werden. ' +
+                            'Bitte als root manuell: apt install python3-esptool  ODER  pip3 install esptool');
                     });
                 });
             });

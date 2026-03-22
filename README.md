@@ -1,6 +1,6 @@
 # iobroker.esp-hub
 
-![Version](https://img.shields.io/badge/version-0.2.1-blue)
+![Version](https://img.shields.io/badge/version-0.2.2-blue)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 [![Donate](https://img.shields.io/badge/Donate-PayPal-00457C.svg?logo=paypal)](https://www.paypal.com/donate/?business=martin%40bchmnn.de&currency_code=EUR)
 
@@ -170,6 +170,9 @@ Wenn `otaUrl` nicht null ist, soll der ESP die Firmware von dieser URL laden und
 ---
 
 ## Changelog
+
+### 0.2.2
+- Bugfix: esptool Auto-Install mit sudo -n (apt + pip3), Fallback pip3 --user
 
 ### 0.2.1
 - Bugfix: esptool Auto-Install: apt install python3-esptool → pip3 → pip (Fallback-Kette)
