@@ -1,7 +1,7 @@
 {
   "common": {
     "name": "esp-hub",
-    "version": "0.3.3",
+    "version": "0.3.4",
     "news": {
       "0.1.0": {
         "en": "Initial release: ESP32/ESP8266 device management, heartbeat registration, OTA firmware updates, Web-UI",
@@ -62,6 +62,10 @@
       "0.3.3": {
         "en": "Bugfix: missing function wrapper for Neu installieren button",
         "de": "Bugfix: fehlende Funktion um Neu-installieren-Button"
+      },
+      "0.3.4": {
+        "en": "Bugfix: missing function wrapper for Adapter aktualisieren button",
+        "de": "Bugfix: fehlende Funktion um Adapter-aktualisieren-Button"
       }
     },
     "title": "ESP-Hub",
