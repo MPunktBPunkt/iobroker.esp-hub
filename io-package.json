@@ -1,7 +1,7 @@
 {
   "common": {
     "name": "esp-hub",
-    "version": "0.2.2",
+    "version": "0.2.3",
     "news": {
       "0.1.0": {
         "en": "Initial release: ESP32/ESP8266 device management, heartbeat registration, OTA firmware updates, Web-UI",
@@ -18,6 +18,10 @@
       "0.2.2": {
         "en": "Fix: esptool install uses sudo -n apt/pip3, fallback pip3 --user",
         "de": "Fix: esptool Install mit sudo -n apt/pip3, Fallback pip3 --user"
+      },
+      "0.2.3": {
+        "en": "Fix: pip3 --user first (no sudo), apt as last fallback, manual hint in UI",
+        "de": "Fix: pip3 --user zuerst (kein sudo), apt als letzter Fallback, Hinweis in UI"
       }
     },
     "title": "ESP-Hub",

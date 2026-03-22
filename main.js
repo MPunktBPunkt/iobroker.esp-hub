@@ -7,7 +7,7 @@ const fs       = require('fs');
 const path     = require('path');
 const { exec } = require('child_process');
 
-const ADAPTER_VERSION = '0.2.2';
+const ADAPTER_VERSION = '0.2.3';
 const NODE_ONLINE_SEC = 120;
 const FIRMWARE_DIR    = '/tmp/iobroker-esphub-fw';
 
@@ -210,44 +210,51 @@ class EspHub extends utils.Adapter {
     // ─── esptool.py Auto-Install ─────────────────────────────────────────
 
     _installEsptool() {
-        // Step 1: Check if already available
+        const self = this;
+
+        // Helper: re-check after install attempt
+        const verify = (method) => {
+            exec('esptool.py version 2>/dev/null || python3 -m esptool version 2>/dev/null', (e, out) => {
+                if (!e && out && out.toLowerCase().includes('esptool')) {
+                    self.esptoolReady = true;
+                    self._log('INFO', 'FLASH', 'esptool bereit (' + method + '): ' + out.split('\n')[0].trim());
+                } else {
+                    self._log('ERROR', 'FLASH',
+                        'esptool konnte nicht installiert werden. ' +
+                        'Bitte im Terminal als root: apt install python3-esptool');
+                }
+            });
+        };
+
+        // Step 1: Already available?
         exec('esptool.py version 2>/dev/null || python3 -m esptool version 2>/dev/null', (err, stdout) => {
             if (!err && stdout && stdout.toLowerCase().includes('esptool')) {
-                this.esptoolReady = true;
-                this._log('INFO', 'FLASH', 'esptool bereits vorhanden: ' + stdout.split('\n')[0].trim());
+                self.esptoolReady = true;
+                self._log('INFO', 'FLASH', 'esptool bereits vorhanden: ' + stdout.split('\n')[0].trim());
                 return;
             }
 
-            this._log('INFO', 'FLASH', 'esptool nicht gefunden — versuche Installation...');
+            self._log('INFO', 'FLASH', 'esptool nicht gefunden — versuche Installation...');
 
-            // Step 2: sudo apt install python3-esptool (bevorzugt, kein pip nötig)
-            exec('sudo -n apt-get install -y python3-esptool 2>&1', { timeout: 120000 }, (err2, out2) => {
-                if (!err2) {
-                    this.esptoolReady = true;
-                    this._log('INFO', 'FLASH', 'esptool via apt installiert.');
-                    return;
-                }
-                this._log('WARN', 'FLASH', 'apt fehlgeschlagen: ' + (out2 || '').split('\n')[0]);
+            // Step 2: pip3 --user (kein sudo nötig, installiert ins Home des iobroker-Users)
+            exec('pip3 install esptool --user 2>&1', { timeout: 120000 }, (err2, out2) => {
+                if (!err2) { verify('pip3 --user'); return; }
+                self._log('WARN', 'FLASH', 'pip3 --user fehlgeschlagen: ' + (out2 || '').split('\n')[0].trim());
 
-                // Step 3: sudo pip3 install esptool
-                exec('sudo -n pip3 install esptool 2>&1', { timeout: 120000 }, (err3, out3) => {
-                    if (!err3) {
-                        this.esptoolReady = true;
-                        this._log('INFO', 'FLASH', 'esptool via sudo pip3 installiert.');
-                        return;
-                    }
-                    this._log('WARN', 'FLASH', 'sudo pip3 fehlgeschlagen: ' + (out3 || '').split('\n')[0]);
+                // Step 3: pip3 vorhanden aber anderes Problem? Versuche ohne --user
+                exec('pip3 install esptool 2>&1', { timeout: 120000 }, (err3, out3) => {
+                    if (!err3) { verify('pip3'); return; }
+                    self._log('WARN', 'FLASH', 'pip3 fehlgeschlagen: ' + (out3 || '').split('\n')[0].trim());
 
-                    // Step 4: pip3 --user (kein sudo nötig, installiert ins Home-Verzeichnis)
-                    exec('pip3 install esptool --user 2>&1', { timeout: 120000 }, (err4, out4) => {
-                        if (!err4) {
-                            this.esptoolReady = true;
-                            this._log('INFO', 'FLASH', 'esptool via pip3 --user installiert.');
-                            return;
-                        }
-                        this._log('ERROR', 'FLASH',
-                            'esptool konnte nicht automatisch installiert werden. ' +
-                            'Bitte als root manuell: apt install python3-esptool  ODER  pip3 install esptool');
+                    // Step 4: sudo -n apt (falls sudoers NOPASSWD konfiguriert)
+                    exec('sudo -n apt-get install -y python3-esptool 2>&1', { timeout: 120000 }, (err4, out4) => {
+                        if (!err4) { verify('apt'); return; }
+                        self._log('WARN', 'FLASH', 'sudo apt fehlgeschlagen: ' + (out4 || '').split('\n')[0].trim());
+
+                        self._log('ERROR', 'FLASH',
+                            'Automatische Installation fehlgeschlagen. ' +
+                            'Bitte im Terminal: apt install python3-esptool  ' +
+                            'oder als iobroker-User: pip3 install esptool --user');
                     });
                 });
             });
@@ -847,6 +854,11 @@ class EspHub extends utils.Adapter {
             '  <div class="card">',
             '    <h3>&#128268; USB-Programmierung (esptool.py)</h3>',
             '    <div id="esptool-status" class="esptool-badge esptool-err">&#10007; esptool.py wird gepr&uuml;ft...</div>',
+            '    <div id="esptool-hint" style="display:none;background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:10px 14px;margin-bottom:12px;font-size:12px;color:var(--muted)">',
+            '      Im Terminal als root ausf&uuml;hren:<br>',
+            '      <code style="color:var(--accent)">apt install python3-esptool</code>',
+            '      &nbsp;&mdash; dann Adapter neu starten.',
+            '    </div>',
             '    <div class="flash-row">',
             '      <label>USB-Port</label>',
             '      <select id="fl-port"><option value="">-- Port ausw&auml;hlen --</option></select>',
@@ -1182,9 +1194,13 @@ class EspHub extends utils.Adapter {
             '      if(d.esptoolReady){',
             '        badge.className="esptool-badge esptool-ok";',
             '        badge.innerHTML="&#10003; esptool.py verf\\u00fcgbar";',
+            '        var hint=document.getElementById("esptool-hint");',
+            '        if(hint)hint.style.display="none";',
             '      } else {',
             '        badge.className="esptool-badge esptool-err";',
-            '        badge.innerHTML="&#10007; esptool.py nicht verf\\u00fcgbar &mdash; Adapter neu starten oder: pip3 install esptool";',
+            '        badge.innerHTML="&#10007; esptool.py nicht verf\\u00fcgbar";',
+            '        var hint=document.getElementById("esptool-hint");',
+            '        if(hint)hint.style.display="block";',
             '      }',
             '      document.getElementById("fl-btn").disabled=!d.esptoolReady;',
             '      var db=document.getElementById("fl-detect-btn");',
