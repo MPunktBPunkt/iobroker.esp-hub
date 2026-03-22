@@ -1,30 +1,28 @@
 # iobroker.esp-hub
 
-![Version](https://img.shields.io/badge/version-0.2.8-blue)
+![Version](https://img.shields.io/badge/version-0.3.1-blue)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 [![Donate](https://img.shields.io/badge/Donate-PayPal-00457C.svg?logo=paypal)](https://www.paypal.com/donate/?business=martin%40bchmnn.de&currency_code=EUR)
 
-> **ESP32 & ESP8266 Hub** für ioBroker — zentrale Verwaltung aller ESP-Geräte im Heimnetz.
+> **ESP32 & ESP8266 Hub** für ioBroker — zentrale Verwaltung, USB-Programmierung und Kompilierung direkt im Browser.
 
 ---
 
-## Übersicht
+## Features
 
-Der **ESP-Hub Adapter** empfängt regelmäßige Heartbeats von ESP32/ESP8266-Geräten, die mit der mitgelieferten Standard-Firmware ausgestattet sind. Er stellt alle Geräteinformationen als ioBroker-Datenpunkte bereit und bietet ein Web-Dashboard zur Verwaltung.
-
-### Funktionen
-
-- 📡 **Automatische Geräteregistrierung** — ESP sendet Heartbeat, Adapter erkennt und speichert Gerät
-- 🔢 **Status-Dashboard** — Online/Offline-Status, IP, RSSI, Uptime, freier Heap
-- 🔌 **IO-Status** — Anzeige benutzerdefinierter IO-Werte aus dem ESP
-- 🔄 **OTA-Updates** — Firmware hochladen und per Klick auf Gerät übertragen
-- 🌐 **Web-UI** auf Port 8093 (konfigurierbar)
-- 🔌 **USB-Programmierung** — esptool.py auto-installiert, ESP erkennen + direkt flashen
-- 🧩 **ioBroker States** für jedes Gerät (IP, Version, RSSI, uptime, IOs...)
+- 📡 **Geräteverwaltung** — ESP32/ESP8266 registrieren sich per Heartbeat, Status als ioBroker-States
+- 🔌 **USB-Programmierung** — esptool.py wird automatisch installiert, ESP erkennen + direkt flashen
+- 💻 **Serieller Monitor** — Live-Debug-Ausgabe vom ESP direkt im Browser
+- ⚙️ **Compiler** — arduino-cli Auto-Install, .ino hochladen, kompilieren, flashen
+- 📚 **Bibliotheks-Manager** — 20+ Bibliotheken in 6 Kategorien per Checkbox installieren
+- 🚀 **OTA-Updates** — Firmware per WLAN auf laufende ESPs verteilen
+- 🧩 **ioBroker States** — IP, Version, RSSI, Uptime, Heap, IO-Werte pro Gerät
 
 ---
 
-## Installation
+## Quickstart
+
+### Adapter installieren
 
 ```bash
 iobroker url https://github.com/MPunktBPunkt/iobroker.esp-hub
@@ -32,14 +30,14 @@ iobroker add esp-hub
 iobroker start esp-hub
 ```
 
----
-
-## Update
+### Adapter aktualisieren
 
 ```bash
 iobroker url https://github.com/MPunktBPunkt/iobroker.esp-hub
 iobroker restart esp-hub
 ```
+
+Web-UI: `http://<ioBroker-IP>:8093`
 
 ---
 
@@ -48,150 +46,107 @@ iobroker restart esp-hub
 | Parameter | Standard | Beschreibung |
 |---|---|---|
 | Web-UI Port | `8093` | HTTP-Port für Web-Interface + ESP-API |
-| Adapter-Host | `192.168.178.1` | IP des ioBroker-Hosts (erreichbar für ESPs — für OTA-URLs) |
-| Heartbeat-Intervall | `30` | Gewünschtes Intervall in Sekunden (wird ESPs mitgeteilt) |
-| Log-Buffer | `500` | Max. interne Log-Einträge |
-
-### Wichtig: Adapter-Host
-
-Der **Adapter-Host** muss die IP-Adresse sein, unter der der ioBroker-Server von den ESPs erreichbar ist. Diese wird für OTA-Update-URLs verwendet. Beim OTA-Update ruft der ESP die Firmware direkt von dieser Adresse ab.
-
----
-
-## ESP-Firmware
-
-Im Verzeichnis [`esp32.EspHub/esp-hub-base/`](https://github.com/MPunktBPunkt/esp32.EspHub) liegt die Standard-Firmware für ESP32 (ESP8266 analog). Sie benötigt folgende Arduino-Bibliotheken:
-
-- **WiFiManager** (tablatronix / tzapu) — Captive Portal für WLAN-Konfiguration
-- **ArduinoJson** (bblanchon) — JSON-Serialisierung
-- **HTTPClient** (built-in ESP32) — HTTP-Kommunikation
-- **Update** (built-in ESP32) — OTA-Updates
-
-### Schnellstart ESP-Firmware
-
-1. `config.h` öffnen und `HUB_HOST` + `HUB_PORT` anpassen
-2. Sketch auf ESP32 flashen
-3. ESP startet ein WLAN `ESP-Hub-Setup` → verbinden → WLAN-Zugangsdaten eingeben
-4. ESP verbindet sich und erscheint im Dashboard
+| Adapter-Host | `192.168.178.1` | IP des ioBroker-Hosts für OTA-URLs |
+| Heartbeat-Intervall | `30` | Sekunden zwischen ESP-Heartbeats |
 
 ---
 
 ## Web-Dashboard
 
-Das Web-Interface ist erreichbar unter `http://<ioBroker-IP>:8093`
-
 | Tab | Inhalt |
 |---|---|
 | 📡 Geräte | Alle registrierten ESPs mit Status, IOs, OTA-Push |
-| 🔌 Programmieren | ESP erkennen, Firmware per USB flashen, Live-Terminal |
-| 📋 Logs | Adapter-Logs mit Filter |
-| ⚙️ System | Firmware hochladen, Versionsprüfung |
+| 🔌 Programmieren | ESP erkennen, USB-Flash, Serieller Monitor |
+| ⚙️ Kompilieren | arduino-cli, Bibliotheks-Manager, .ino → .bin |
+| 📋 Logs | Adapter-Logs mit Filter und Export |
+| 🔧 System | Firmware hochladen, Versionsprüfung, Self-Update |
+
+---
+
+## ESP-Firmware (esp32.EspHub)
+
+Die Standard-Firmware `esp-hub-base` wird direkt mit dem Adapter mitgeliefert und erscheint automatisch im Firmware-Dropdown. Für den Wemos D1 Mini ESP32 ist eine vorkompilierte .bin enthalten — einfach USB anschließen und flashen.
+
+### Eigene Firmware kompilieren
+
+1. **Kompilieren-Tab** → `+ ESP32 Board-Paket` installieren
+2. **📚 Bibliotheken** → WiFiManager + ArduinoJson auswählen → installieren
+3. `.ino` per Drag & Drop hochladen
+4. Board wählen → **⚡ Kompilieren**
+5. .bin erscheint automatisch im Programmieren-Tab
+
+### Bibliotheken (Arduino Library Manager)
+
+- **WiFiManager** (tablatronix/tzapu) — WLAN Captive Portal
+- **ArduinoJson** (bblanchon) — JSON-Serialisierung
+
+Viele weitere Bibliotheken im integrierten Bibliotheks-Manager:
+Display, Sensoren, LED, Aktoren, Kommunikation, Energie & Messtechnik.
+
+### Erststart ESP
+
+1. Flash-Tab → Port wählen → `esp-hub-base.bin` → ⚡ Flashen
+2. **Serieller Monitor** verbinden (115200 Baud) → Debug-Output sehen
+3. ESP startet WLAN-Hotspot **"ESP-Hub-Setup"**
+4. Mit Hotspot verbinden → WLAN + Hub-IP eingeben
+5. ESP erscheint im Geräte-Tab
+
+> **WLAN zurücksetzen:** BOOT-Taste beim Einschalten 3 Sekunden halten
+
+---
+
+## USB-Durchreichung (LXC / Proxmox)
+
+In `/etc/pve/lxc/<ID>.conf` ergänzen:
+```
+lxc.cgroup2.devices.allow: c 188:* rwm
+lxc.mount.entry: /dev/ttyUSB0 dev/ttyUSB0 none bind,optional,create=file
+```
+
+udev-Regel auf Proxmox-Host (`/etc/udev/rules.d/99-usb-serial.rules`):
+```
+SUBSYSTEM=="tty", ATTRS{idVendor}=="10c4", ATTRS{idProduct}=="ea60", MODE="0666"
+SUBSYSTEM=="tty", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="7523", MODE="0666"
+SUBSYSTEM=="tty", ATTRS{idVendor}=="0403", ATTRS{idProduct}=="6001", MODE="0666"
+```
+
+```bash
+udevadm control --reload-rules && udevadm trigger
+pct restart <ID>
+```
 
 ---
 
 ## ioBroker States
 
-Für jedes registrierte ESP-Gerät werden folgende States angelegt:
-
 ```
-esp-hub.0.devices.<MAC>/
-  ├── name        Gerätename (beschreibbar)
-  ├── ip          IP-Adresse
-  ├── mac         MAC-Adresse
-  ├── hwType      esp32 / esp8266
-  ├── version     Firmware-Version
-  ├── rssi        WLAN-Signalstärke (dBm)
-  ├── uptime      Laufzeit in Sekunden
-  ├── freeHeap    Freier Heap-Speicher (Bytes)
-  ├── lastSeen    Zeitstempel letzter Heartbeat
-  ├── online      true = online (Heartbeat < 120s)
-  ├── ios         IO-Werte als JSON-String
-  └── otaUrl      OTA-URL (beschreibbar → triggert Update beim nächsten Heartbeat)
+esp-hub.0
+├── info.connection          boolean  Adapter aktiv
+├── info.deviceCount         number   Anzahl Geräte
+└── devices.<MAC>/
+    ├── name                 string   Gerätename (schreibbar)
+    ├── ip                   string   IP-Adresse
+    ├── mac                  string   MAC-Adresse
+    ├── hwType               string   esp32 / esp8266
+    ├── version              string   Firmware-Version
+    ├── rssi                 number   WLAN-Signal (dBm)
+    ├── uptime               number   Uptime (Sekunden)
+    ├── freeHeap             number   Freier Heap (Bytes)
+    ├── lastSeen             number   Timestamp letzter Heartbeat
+    ├── online               boolean  < 120s seit lastSeen
+    ├── ios                  string   IO-Werte als JSON
+    └── otaUrl               string   OTA-URL (schreibbar)
 ```
 
 ---
 
-## API-Referenz
+## ESP-API
 
-### ESP → Adapter
-
-| Methode | Pfad | Beschreibung |
-|---|---|---|
-| POST | `/api/register` | Heartbeat / Registrierung |
-| GET | `/api/ota/check?mac=XXX` | OTA-Status abfragen |
-| GET | `/firmware/<name>.bin` | Firmware-Binary herunterladen |
-
-#### Heartbeat-Body (JSON)
-```json
-{
-  "mac":      "C8C9A3CB7B08",
-  "name":     "Sensor-Keller",
-  "hwType":   "esp32",
-  "version":  "1.0.0",
-  "ip":       "192.168.178.200",
-  "rssi":     -62,
-  "uptime":   3600,
-  "freeHeap": 180000,
-  "ios": {
-    "temperature": { "type": "sensor", "value": 21.5, "unit": "°C" },
-    "relay1":      { "type": "output", "value": 0 }
-  }
-}
 ```
-
-#### Heartbeat-Response
-```json
-{
-  "ok":       true,
-  "name":     "Sensor-Keller",
-  "interval": 30,
-  "otaUrl":   null
-}
+POST /api/register    Heartbeat {mac, name, hwType, version, ip, rssi, uptime, freeHeap, ios}
+GET  /api/ota/check   OTA-Abfrage ?mac=XXX → {update:bool, url?}
+GET  /firmware/*.bin  Firmware-Binary ausliefern
 ```
-
-Wenn `otaUrl` nicht null ist, soll der ESP die Firmware von dieser URL laden und einen OTA-Update durchführen.
-
-### Browser → Adapter
-
-| Methode | Pfad | Beschreibung |
-|---|---|---|
-| GET | `/api/devices` | Alle Geräte als JSON |
-| GET | `/api/stats` | Statistiken |
-| GET | `/api/firmwares` | Firmware-Dateiliste |
-| GET | `/api/logs` | Log-Buffer |
-| GET | `/api/version` | Version + GitHub-Check |
-| POST | `/api/firmware-upload` | Firmware hochladen (multipart) |
-| POST | `/api/firmware-delete` | Firmware löschen `{name}` |
-| POST | `/api/ota-push` | OTA planen `{mac, firmware}` |
-| POST | `/api/device-rename` | Gerät umbenennen `{mac, name}` |
-| POST | `/api/device-delete` | Gerät löschen `{mac}` |
-| POST | `/api/update` | Adapter selbst aktualisieren |
-
----
-
-## Changelog
-
-### 0.2.2
-- Bugfix: esptool Auto-Install mit sudo -n (apt + pip3), Fallback pip3 --user
-
-### 0.2.1
-- Bugfix: esptool Auto-Install: apt install python3-esptool → pip3 → pip (Fallback-Kette)
-- Bugfix: python3 -m esptool als Fallback wenn esptool.py nicht im PATH
-
-### 0.2.0
-- Neu: Tab "Programmieren" — ESP32/ESP8266 direkt via USB flashen
-- Neu: Button "ESP erkennen" — liest Chip-Typ, MAC und Flash-Größe aus
-- Neu: esptool.py wird beim Adapter-Start automatisch installiert (pip3)
-- Neu: Live-Terminal mit Fortschrittsausgabe beim Flashen und Erkennen
-- Neu: API /api/ports, /api/chip-detect, /api/flash-usb, /api/flash-log
-
-### 0.1.0 (2026-03-21)
-- Erstveröffentlichung
-- ESP-Geräteverwaltung mit Heartbeat-Registrierung
-- OTA-Firmware-Update-Verwaltung
-- Web-UI: Geräte / Logs / System
-- ioBroker States pro Gerät
-- Standard ESP32-Firmware (esp32.EspHub)
 
 ---
 
@@ -200,3 +155,37 @@ Wenn `otaUrl` nicht null ist, soll der ESP die Firmware von dieser URL laden und
 GNU General Public License v3.0 © MPunktBPunkt — siehe [LICENSE](LICENSE)
 
 [![Donate](https://img.shields.io/badge/Donate-PayPal-00457C.svg?logo=paypal)](https://www.paypal.com/donate/?business=martin%40bchmnn.de&currency_code=EUR)
+
+---
+
+## Changelog
+
+### 0.3.1
+- Neu: Bibliotheks-Manager — 6 Kategorien, 20+ Bibliotheken mit Checkboxen (Display, Sensoren, LED, Energie...)
+- Neu: Alle/Keine/Standard Auswahlbuttons
+
+### 0.3.0
+- Neu: Serieller Monitor im Programmieren-Tab — Live-Debug-Ausgabe vom ESP
+- Neu: Bibliotheken-Button (WiFiManager + ArduinoJson)
+- Fix: ANSI-Farbcodes aus Compiler-Ausgabe gefiltert
+
+### 0.2.8
+- Neu: Standard-Firmware esp-hub-base für Wemos D1 Mini ESP32 direkt mitgeliefert
+
+### 0.2.7
+- Neu: Wemos D1 Mini ESP32 als Standard-Board, 921600 Baud als Standard
+
+### 0.2.6
+- Bugfix: JS-Syntaxfehler im Kompilieren-Tab
+
+### 0.2.5
+- Neu: Kompilieren-Tab mit arduino-cli, .ino Upload, Board-Auswahl
+
+### 0.2.4
+- Fix: pip3 ohne Flags (Ubuntu pip22 kompatibel)
+
+### 0.2.0
+- Neu: Programmieren-Tab mit USB-Flash, ESP erkennen, esptool Auto-Install
+
+### 0.1.0
+- Erstveröffentlichung

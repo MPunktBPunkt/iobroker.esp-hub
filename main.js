@@ -7,7 +7,7 @@ const fs       = require('fs');
 const path     = require('path');
 const { exec } = require('child_process');
 
-const ADAPTER_VERSION = '0.2.8';
+const ADAPTER_VERSION = '0.3.1';
 const NODE_ONLINE_SEC = 120;
 const FIRMWARE_DIR    = '/tmp/iobroker-esphub-fw';
 const SKETCH_DIR      = '/tmp/iobroker-esphub-sketches';
@@ -31,6 +31,9 @@ class EspHub extends utils.Adapter {
         this.compileLog       = [];
         this.compileRunning   = false;
         this.arduinoCliReady  = false;
+        this.serialLog        = [];   // Serial Monitor Ring-Buffer
+        this.serialProc       = null; // laufender cat-Prozess
+        this.serialPort       = '';   // aktuell geöffneter Port
         this.httpServer       = null;
         this.pack             = {};
         try { this.pack = require('./package.json'); } catch (e) { /* ignore */ }
@@ -75,6 +78,7 @@ class EspHub extends utils.Adapter {
 
     async onUnload(callback) {
         try {
+            if (this.serialProc) { try { this.serialProc.kill(); } catch(e){} this.serialProc = null; }
             await Promise.race([
                 new Promise(res => { if (this.httpServer) this.httpServer.close(res); else res(); }),
                 new Promise(res => setTimeout(res, 2500))
@@ -212,6 +216,53 @@ class EspHub extends utils.Adapter {
         return reply;
     }
 
+    // ─── Serial Monitor ──────────────────────────────────────────────────
+
+    _serialStart(port, baud) {
+        if (this.serialProc) { try { this.serialProc.kill(); } catch(e){} this.serialProc = null; }
+        this.serialLog  = [];
+        this.serialPort = port;
+        const self      = this;
+        const addLine   = (line) => {
+            self.serialLog.unshift({ ts: new Date().toISOString(), line });
+            if (self.serialLog.length > 500) self.serialLog.pop();
+        };
+
+        // Set baud rate via stty, then stream with cat
+        const { spawn, exec } = require('child_process');
+        exec('stty -F ' + port + ' ' + (baud || 115200) + ' raw -echo', (err) => {
+            if (err) {
+                addLine('[ERR] stty: ' + err.message);
+                return;
+            }
+            addLine('[Serial Monitor] Verbunden mit ' + port + ' @ ' + (baud || 115200) + ' Baud');
+            const proc = spawn('cat', [port], { stdio: ['ignore', 'pipe', 'pipe'] });
+            self.serialProc = proc;
+
+            let buf = '';
+            proc.stdout.on('data', (d) => {
+                buf += d.toString('latin1');
+                const lines = buf.split('\n');
+                buf = lines.pop(); // keep incomplete line
+                lines.forEach(l => { if (l.trim()) addLine(l.replace(/\r/g, '')); });
+            });
+            proc.stderr.on('data', (d) => addLine('[ERR] ' + d.toString().trim()));
+            proc.on('close', () => {
+                addLine('[Serial Monitor] Verbindung getrennt.');
+                if (self.serialProc === proc) self.serialProc = null;
+            });
+            proc.on('error', (e) => addLine('[ERR] ' + e.message));
+        });
+    }
+
+    _serialStop() {
+        if (this.serialProc) {
+            try { this.serialProc.kill(); } catch(e){}
+            this.serialProc = null;
+        }
+        this.serialLog.unshift({ ts: new Date().toISOString(), line: '[Serial Monitor] Gestoppt.' });
+    }
+
     // ─── Bundled Firmware ────────────────────────────────────────────────
 
     _copyBundledFirmwares() {
@@ -345,8 +396,14 @@ class EspHub extends utils.Adapter {
         const parts = cmd.split(' ');
         const proc  = spawn(parts[0], parts.slice(1), { stdio: ['ignore', 'pipe', 'pipe'] });
 
-        proc.stdout.on('data', d => String(d).split('\n').forEach(l => { if (l.trim()) addLine(l.trim(), false); }));
-        proc.stderr.on('data', d => String(d).split('\n').forEach(l => { if (l.trim()) addLine(l.trim(), l.includes('error') || l.includes('Error')); }));
+        proc.stdout.on('data', d => String(d).split('\n').forEach(l => {
+            const clean = l.replace(/\x1b\[[0-9;]*m/g, '').trim();
+            if (clean) addLine(clean, false);
+        }));
+        proc.stderr.on('data', d => String(d).split('\n').forEach(l => {
+            const clean = l.replace(/\x1b\[[0-9;]*m/g, '').trim();
+            if (clean) addLine(clean, clean.includes('error') || clean.includes('Error'));
+        }));
 
         proc.on('close', code => {
             this.compileRunning = false;
@@ -883,6 +940,34 @@ class EspHub extends utils.Adapter {
             return;
         }
 
+        // ── Library install ──
+        if (url === '/api/lib-install' && req.method === 'POST') {
+            const body = await readBody();
+            let data = {};
+            try { data = JSON.parse(body.toString()); } catch (e) { /* ignore */ }
+            const libs = (data.libs || ['WiFiManager', 'ArduinoJson']);
+            const cli = this._getArduinoCliCmd();
+            if (!cli) { json({ ok: false, error: 'arduino-cli nicht verfügbar' }); return; }
+            const addLine = (line, isErr) => { this.compileLog.unshift({ ts: new Date().toISOString(), line, err: isErr || false }); };
+            this.compileLog = [];
+            this.compileRunning = true;
+            const cmd = cli + ' lib install ' + libs.map(l => '"' + l + '"').join(' ') + ' 2>&1';
+            addLine('▶ ' + cmd, false);
+            json({ ok: true, message: 'Bibliotheken werden installiert...' });
+            exec(cmd, { timeout: 120000 }, (err, out) => {
+                this.compileRunning = false;
+                (out || '').split('\n').forEach(l => { if (l.trim()) addLine(l.trim(), false); });
+                if (err) {
+                    addLine('❌ Fehler: ' + err.message, true);
+                    this._log('ERROR', 'COMPILE', 'Lib-Install fehlgeschlagen');
+                } else {
+                    addLine('✅ Bibliotheken installiert: ' + libs.join(', '), false);
+                    this._log('INFO', 'COMPILE', 'Bibliotheken installiert: ' + libs.join(', '));
+                }
+            });
+            return;
+        }
+
         // ── Arduino-CLI Status ──
         if (url === '/api/arduino-status') {
             json({ ready: this.arduinoCliReady, cmd: this._getArduinoCliCmd() || '' });
@@ -989,6 +1074,33 @@ class EspHub extends utils.Adapter {
             return;
         }
 
+        // ── Serial Monitor Start ──
+        if (url === '/api/serial-start' && req.method === 'POST') {
+            const body = await readBody();
+            let data = {};
+            try { data = JSON.parse(body.toString()); } catch(e) {}
+            const port = data.port || '';
+            const baud = data.baud || 115200;
+            if (!port) { json({ ok: false, error: 'Port erforderlich' }); return; }
+            if (this.flashRunning) { json({ ok: false, error: 'Flash läuft — bitte warten' }); return; }
+            this._serialStart(port, baud);
+            json({ ok: true });
+            return;
+        }
+
+        // ── Serial Monitor Stop ──
+        if (url === '/api/serial-stop' && req.method === 'POST') {
+            this._serialStop();
+            json({ ok: true });
+            return;
+        }
+
+        // ── Serial Monitor Log ──
+        if (url === '/api/serial-log') {
+            json({ log: this.serialLog.slice(0, 500), running: !!this.serialProc, port: this.serialPort });
+            return;
+        }
+
         res.writeHead(404, { 'Content-Type': 'text/plain' });
         res.end('Not found: ' + url);
     }
@@ -1091,6 +1203,11 @@ class EspHub extends utils.Adapter {
             '.esptool-badge{display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border-radius:6px;font-size:12px;margin-bottom:14px}',
             '.esptool-ok{background:rgba(63,185,80,.1);border:1px solid rgba(63,185,80,.3);color:var(--green)}',
             '.esptool-err{background:rgba(248,81,73,.1);border:1px solid rgba(248,81,73,.3);color:var(--red)}',
+            '.lib-group{background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:10px 12px}',
+            '.lib-group-title{font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px}',
+            '.lib-item{display:flex;align-items:center;gap:6px;padding:3px 0;cursor:pointer;font-size:13px;user-select:none}',
+            '.lib-item input{accent-color:var(--accent);cursor:pointer;flex-shrink:0}',
+            '.lib-desc{color:var(--dim);font-size:11px;margin-left:auto}',
         ].join('\n');
 
         const BODY = [
@@ -1181,6 +1298,24 @@ class EspHub extends utils.Adapter {
             '      <tr><td>Flash-Adresse</td><td style="font-size:12px">ESP32: 0x0 &nbsp;|&nbsp; ESP8266: 0x0</td></tr>',
             '    </table>',
             '  </div>',
+            '  <div class="card">',
+            '    <h3>&#128187; Serieller Monitor</h3>',
+            '    <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap">',
+            '      <select id="sm-port" style="min-width:160px"><option value="">-- Port w&auml;hlen --</option></select>',
+            '      <select id="sm-baud" style="width:110px">',
+            '        <option value="115200">115200</option>',
+            '        <option value="74880">74880</option>',
+            '        <option value="9600">9600</option>',
+            '      </select>',
+            '      <button class="btn btn-green btn-sm" id="sm-start-btn">&#9654; Verbinden</button>',
+            '      <button class="btn btn-red btn-sm" id="sm-stop-btn">&#9646;&#9646; Trennen</button>',
+            '      <button class="btn btn-sm" id="sm-clear-btn">Leeren</button>',
+            '      <span id="sm-status" style="font-size:12px;color:var(--muted)"></span>',
+            '    </div>',
+            '    <div class="flash-term" id="serial-term" style="height:280px">',
+            '      <div class="ft-line ft-dim">Bereit. Port ausw&auml;hlen und verbinden.</div>',
+            '    </div>',
+            '  </div>',
             '</div>',
 
             // ── Compile Panel ──
@@ -1196,6 +1331,74 @@ class EspHub extends utils.Adapter {
             '      <button class="btn btn-sm btn-blue" id="ac-install-btn">&#8635; Neu installieren</button>',
             '      <button class="btn btn-sm" id="ac-esp32-btn">+ ESP32 Board-Paket</button>',
             '      <button class="btn btn-sm" id="ac-esp8266-btn">+ ESP8266 Board-Paket</button>',
+            '    </div>',
+            '  </div>',
+            '  <div class="card">',
+            '    <h3>&#128218; Bibliotheken installieren</h3>',
+            '    <div id="lib-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:10px;margin-bottom:14px">',
+
+            // Grundlagen
+            '      <div class="lib-group">',
+            '        <div class="lib-group-title">Grundlagen</div>',
+            '        <label class="lib-item"><input type="checkbox" value="WiFiManager" checked> WiFiManager <span class="lib-desc">WLAN Captive Portal</span></label>',
+            '        <label class="lib-item"><input type="checkbox" value="ArduinoJson" checked> ArduinoJson <span class="lib-desc">JSON Parsing</span></label>',
+            '        <label class="lib-item"><input type="checkbox" value="PubSubClient"> PubSubClient <span class="lib-desc">MQTT Client</span></label>',
+            '        <label class="lib-item"><input type="checkbox" value="NTPClient"> NTPClient <span class="lib-desc">Zeit per NTP</span></label>',
+            '      </div>',
+
+            // Display
+            '      <div class="lib-group">',
+            '        <div class="lib-group-title">Display</div>',
+            '        <label class="lib-item"><input type="checkbox" value="Adafruit SSD1306"> Adafruit SSD1306 <span class="lib-desc">OLED 128x64</span></label>',
+            '        <label class="lib-item"><input type="checkbox" value="Adafruit GFX Library"> Adafruit GFX <span class="lib-desc">Grafik-Basis</span></label>',
+            '        <label class="lib-item"><input type="checkbox" value="U8g2"> U8g2 <span class="lib-desc">Universal Display</span></label>',
+            '        <label class="lib-item"><input type="checkbox" value="TFT_eSPI"> TFT_eSPI <span class="lib-desc">TFT/LCD Displays</span></label>',
+            '        <label class="lib-item"><input type="checkbox" value="LiquidCrystal I2C"> LiquidCrystal I2C <span class="lib-desc">LCD 16x2 I2C</span></label>',
+            '      </div>',
+
+            // Sensoren
+            '      <div class="lib-group">',
+            '        <div class="lib-group-title">Sensoren</div>',
+            '        <label class="lib-item"><input type="checkbox" value="DHT sensor library"> DHT Sensor <span class="lib-desc">DHT11/22 Temp+Hum</span></label>',
+            '        <label class="lib-item"><input type="checkbox" value="OneWire"> OneWire <span class="lib-desc">1-Wire Bus</span></label>',
+            '        <label class="lib-item"><input type="checkbox" value="DallasTemperature"> DallasTemperature <span class="lib-desc">DS18B20 Sensor</span></label>',
+            '        <label class="lib-item"><input type="checkbox" value="Adafruit BME280 Library"> Adafruit BME280 <span class="lib-desc">Temp/Hum/Druck</span></label>',
+            '        <label class="lib-item"><input type="checkbox" value="Adafruit BMP280 Library"> Adafruit BMP280 <span class="lib-desc">Temp/Druck</span></label>',
+            '        <label class="lib-item"><input type="checkbox" value="Adafruit SHTC3 Library"> Adafruit SHTC3 <span class="lib-desc">Temp/Hum I2C</span></label>',
+            '      </div>',
+
+            // LED & Aktor
+            '      <div class="lib-group">',
+            '        <div class="lib-group-title">LED &amp; Aktoren</div>',
+            '        <label class="lib-item"><input type="checkbox" value="FastLED"> FastLED <span class="lib-desc">WS2812 RGB-LEDs</span></label>',
+            '        <label class="lib-item"><input type="checkbox" value="Adafruit NeoPixel"> NeoPixel <span class="lib-desc">WS2812 (Adafruit)</span></label>',
+            '        <label class="lib-item"><input type="checkbox" value="Servo"> Servo <span class="lib-desc">Servomotor</span></label>',
+            '        <label class="lib-item"><input type="checkbox" value="AccelStepper"> AccelStepper <span class="lib-desc">Schrittmotor</span></label>',
+            '      </div>',
+
+            // Kommunikation
+            '      <div class="lib-group">',
+            '        <div class="lib-group-title">Kommunikation</div>',
+            '        <label class="lib-item"><input type="checkbox" value="IRremote"> IRremote <span class="lib-desc">IR Sender/Empf.</span></label>',
+            '        <label class="lib-item"><input type="checkbox" value="RadioHead"> RadioHead <span class="lib-desc">433MHz/NRF24</span></label>',
+            '        <label class="lib-item"><input type="checkbox" value="Modbus"> Modbus <span class="lib-desc">Modbus RTU/TCP</span></label>',
+            '      </div>',
+
+            // Strom & Energie
+            '      <div class="lib-group">',
+            '        <div class="lib-group-title">Energie &amp; Messtechnik</div>',
+            '        <label class="lib-item"><input type="checkbox" value="EmonLib"> EmonLib <span class="lib-desc">Stromverbrauch CT</span></label>',
+            '        <label class="lib-item"><input type="checkbox" value="ADS1X15"> ADS1X15 <span class="lib-desc">16-bit ADC I2C</span></label>',
+            '        <label class="lib-item"><input type="checkbox" value="HX711 Arduino Library"> HX711 <span class="lib-desc">Wägezelle</span></label>',
+            '        <label class="lib-item"><input type="checkbox" value="PZEM-004T-v3"> PZEM-004T <span class="lib-desc">Energiemessung</span></label>',
+            '      </div>',
+
+            '    </div>',
+            '    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">',
+            '      <button class="btn btn-green" id="ac-libs-btn">&#128218; Ausgew&auml;hlte installieren</button>',
+            '      <button class="btn btn-sm" id="ac-libs-all-btn">Alle ausw&auml;hlen</button>',
+            '      <button class="btn btn-sm" id="ac-libs-none-btn">Keine</button>',
+            '      <button class="btn btn-sm" id="ac-libs-default-btn">Standard</button>',
             '    </div>',
             '  </div>',
             '  <div class="card">',
@@ -1519,9 +1722,14 @@ class EspHub extends utils.Adapter {
             'function loadPorts(){',
             '  fetch("/api/ports").then(function(r){return r.json();}).then(function(d){',
             '    var sel=document.getElementById("fl-port");',
+            '    var smSel=document.getElementById("sm-port");',
             '    var cur=sel.value;',
             '    sel.innerHTML=\'<option value="">-- Port ausw\\u00e4hlen --</option>\';',
-            '    d.ports.forEach(function(p){sel.innerHTML+=\'<option value="\'+p+\'">\'+p+\'</option>\';});',
+            '    if(smSel)smSel.innerHTML=\'<option value="">-- Port w\\u00e4hlen --</option>\';',
+            '    d.ports.forEach(function(p){',
+            '      sel.innerHTML+=\'<option value="\'+p+\'">\'+p+\'</option>\';',
+            '      if(smSel)smSel.innerHTML+=\'<option value="\'+p+\'">\'+p+\'</option>\';',
+            '    });',
             '    if(cur&&d.ports.indexOf(cur)>=0)sel.value=cur;',
             '    var badge=document.getElementById("esptool-status");',
             '    if(badge){',
@@ -1754,7 +1962,29 @@ class EspHub extends utils.Adapter {
             '  if(term)term.innerHTML=\'<div class="ft-line ft-dim">Terminal geleert.</div>\';',
             '});',
             '',
-            'document.getElementById("ac-install-btn").addEventListener("click",function(){',
+            'document.getElementById("ac-libs-btn").addEventListener("click",function(){',
+            '  var checks=document.querySelectorAll("#lib-grid input[type=checkbox]:checked");',
+            '  var libs=Array.from(checks).map(function(c){return c.value;});',
+            '  if(!libs.length){alert("Bitte mindestens eine Bibliothek ausw\\u00e4hlen!");return;}',
+            '  var term=document.getElementById("compile-term");',
+            '  if(term)term.innerHTML="";',
+            '  fetch("/api/lib-install",{method:"POST",headers:{"Content-Type":"application/json"},',
+            '    body:JSON.stringify({libs:libs})})',
+            '  .then(function(){pollCompileLog();});',
+            '});',
+            'document.getElementById("ac-libs-all-btn").addEventListener("click",function(){',
+            '  document.querySelectorAll("#lib-grid input[type=checkbox]").forEach(function(c){c.checked=true;});',
+            '});',
+            'document.getElementById("ac-libs-none-btn").addEventListener("click",function(){',
+            '  document.querySelectorAll("#lib-grid input[type=checkbox]").forEach(function(c){c.checked=false;});',
+            '});',
+            'document.getElementById("ac-libs-default-btn").addEventListener("click",function(){',
+            '  var defaults=["WiFiManager","ArduinoJson"];',
+            '  document.querySelectorAll("#lib-grid input[type=checkbox]").forEach(function(c){',
+            '    c.checked=defaults.indexOf(c.value)>=0;',
+            '  });',
+            '});',
+            '',
             '  if(!confirm("arduino-cli neu installieren?"))return;',
             '  fetch("/api/arduino-install",{method:"POST"}).then(function(){',
             '    setTimeout(loadArduinoStatus,5000);',
@@ -1813,7 +2043,70 @@ class EspHub extends utils.Adapter {
             '  });',
             '}',
             '',
-            'document.getElementById("upd-btn").addEventListener("click",function(){',
+            '// ── Serial Monitor ────────────────────────────────',
+            'var serialPolling=null, serialLastLen=0;',
+            '',
+            'function smAddLine(txt, cls){',
+            '  var term=document.getElementById("serial-term");',
+            '  if(!term)return;',
+            '  var d=document.createElement("div");',
+            '  d.className="ft-line"+(cls?" "+cls:"");',
+            '  d.textContent=txt;',
+            '  term.insertBefore(d,term.firstChild);',
+            '}',
+            '',
+            'function pollSerial(){',
+            '  fetch("/api/serial-log").then(function(r){return r.json();}).then(function(d){',
+            '    var st=document.getElementById("sm-status");',
+            '    if(st)st.textContent=d.running?"\\u25CF Verbunden ("+d.port+")":"\\u25CB Getrennt";',
+            '    if(st)st.style.color=d.running?"var(--green)":"var(--muted)";',
+            '    // Only render new lines',
+            '    if(d.log.length!==serialLastLen){',
+            '      var term=document.getElementById("serial-term");',
+            '      if(term){',
+            '        term.innerHTML="";',
+            '        d.log.slice().reverse().forEach(function(e){',
+            '          var div=document.createElement("div");',
+            '          div.className="ft-line"+(e.line.startsWith("[ERR]")?" ft-err":(e.line.startsWith("[Serial")?" ft-dim":""));',
+            '          div.textContent=e.line;',
+            '          term.insertBefore(div,term.firstChild);',
+            '        });',
+            '        serialLastLen=d.log.length;',
+            '      }',
+            '    }',
+            '    if(d.running)serialPolling=setTimeout(pollSerial,500);',
+            '    else serialPolling=null;',
+            '  }).catch(function(){if(serialPolling!==null)serialPolling=setTimeout(pollSerial,2000);});',
+            '}',
+            '',
+            'document.getElementById("sm-start-btn").addEventListener("click",function(){',
+            '  var port=document.getElementById("sm-port").value;',
+            '  var baud=document.getElementById("sm-baud").value;',
+            '  if(!port){alert("Bitte USB-Port ausw\\u00e4hlen!");return;}',
+            '  var term=document.getElementById("serial-term");',
+            '  if(term)term.innerHTML="";',
+            '  serialLastLen=0;',
+            '  fetch("/api/serial-start",{method:"POST",headers:{"Content-Type":"application/json"},',
+            '    body:JSON.stringify({port:port,baud:parseInt(baud)})})',
+            '  .then(function(){',
+            '    if(serialPolling)clearTimeout(serialPolling);',
+            '    pollSerial();',
+            '  }).catch(function(e){alert("Fehler: "+e);});',
+            '});',
+            '',
+            'document.getElementById("sm-stop-btn").addEventListener("click",function(){',
+            '  if(serialPolling){clearTimeout(serialPolling);serialPolling=null;}',
+            '  fetch("/api/serial-stop",{method:"POST"}).catch(function(){});',
+            '  var st=document.getElementById("sm-status");',
+            '  if(st){st.textContent="\\u25CB Getrennt";st.style.color="var(--muted)";}',
+            '});',
+            '',
+            'document.getElementById("sm-clear-btn").addEventListener("click",function(){',
+            '  var term=document.getElementById("serial-term");',
+            '  if(term)term.innerHTML=\'<div class="ft-line ft-dim">Terminal geleert.</div>\';',
+            '  serialLastLen=0;',
+            '});',
+            '',
             '  if(!confirm("Adapter aktualisieren und neu starten?"))return;',
             '  fetch("/api/update",{method:"POST"}).then(function(r){return r.json();})',
             '  .then(function(res){',
