@@ -1,11 +1,15 @@
 {
   "common": {
     "name": "esp-hub",
-    "version": "0.1.0",
+    "version": "0.2.0",
     "news": {
       "0.1.0": {
         "en": "Initial release: ESP32/ESP8266 device management, heartbeat registration, OTA firmware updates, Web-UI",
         "de": "Erstveröffentlichung: ESP32/ESP8266-Geräteverwaltung, Heartbeat-Registrierung, OTA-Firmware-Updates, Web-UI"
+      },
+      "0.2.0": {
+        "en": "New: USB programming tab, esptool.py auto-install",
+        "de": "Neu: USB-Programmier-Tab, esptool.py Auto-Installation"
       }
     },
     "title": "ESP-Hub",
@@ -17,8 +21,17 @@
       "de": "Verwaltet alle ESP32 und ESP8266 Geräte im WLAN: Registrierung, Status, IOs und OTA-Updates.",
       "en": "Manages all ESP32 and ESP8266 devices in your WiFi network: registration, status, IOs and OTA updates."
     },
-    "authors": ["Martin Buchmann <martin@bchmnn.de>"],
-    "keywords": ["esp32", "esp8266", "ota", "wifi", "iot", "hub"],
+    "authors": [
+      "Martin Buchmann <martin@bchmnn.de>"
+    ],
+    "keywords": [
+      "esp32",
+      "esp8266",
+      "ota",
+      "wifi",
+      "iot",
+      "hub"
+    ],
     "license": "GPL-3.0",
     "platform": "Node.js",
     "main": "main.js",

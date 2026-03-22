@@ -1,5 +1,6 @@
 # iobroker.esp-hub
 
+![Version](https://img.shields.io/badge/version-0.2.0-blue)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 [![Donate](https://img.shields.io/badge/Donate-PayPal-00457C.svg?logo=paypal)](https://www.paypal.com/donate/?business=martin%40bchmnn.de&currency_code=EUR)
 
@@ -18,6 +19,7 @@ Der **ESP-Hub Adapter** empfängt regelmäßige Heartbeats von ESP32/ESP8266-Ger
 - 🔌 **IO-Status** — Anzeige benutzerdefinierter IO-Werte aus dem ESP
 - 🔄 **OTA-Updates** — Firmware hochladen und per Klick auf Gerät übertragen
 - 🌐 **Web-UI** auf Port 8093 (konfigurierbar)
+- 🔌 **USB-Programmierung** — esptool.py auto-installiert, ESP erkennen + direkt flashen
 - 🧩 **ioBroker States** für jedes Gerät (IP, Version, RSSI, uptime, IOs...)
 
 ---
@@ -81,6 +83,7 @@ Das Web-Interface ist erreichbar unter `http://<ioBroker-IP>:8093`
 | Tab | Inhalt |
 |---|---|
 | 📡 Geräte | Alle registrierten ESPs mit Status, IOs, OTA-Push |
+| 🔌 Programmieren | ESP erkennen, Firmware per USB flashen, Live-Terminal |
 | 📋 Logs | Adapter-Logs mit Filter |
 | ⚙️ System | Firmware hochladen, Versionsprüfung |
 
@@ -167,6 +170,13 @@ Wenn `otaUrl` nicht null ist, soll der ESP die Firmware von dieser URL laden und
 ---
 
 ## Changelog
+
+### 0.2.0
+- Neu: Tab "Programmieren" — ESP32/ESP8266 direkt via USB flashen
+- Neu: Button "ESP erkennen" — liest Chip-Typ, MAC und Flash-Größe aus
+- Neu: esptool.py wird beim Adapter-Start automatisch installiert (pip3)
+- Neu: Live-Terminal mit Fortschrittsausgabe beim Flashen und Erkennen
+- Neu: API /api/ports, /api/chip-detect, /api/flash-usb, /api/flash-log
 
 ### 0.1.0 (2026-03-21)
 - Erstveröffentlichung

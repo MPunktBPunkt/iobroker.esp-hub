@@ -7,7 +7,7 @@ const fs       = require('fs');
 const path     = require('path');
 const { exec } = require('child_process');
 
-const ADAPTER_VERSION = '0.1.0';
+const ADAPTER_VERSION = '0.2.0';
 const NODE_ONLINE_SEC = 120;
 const FIRMWARE_DIR    = '/tmp/iobroker-esphub-fw';
 
@@ -22,10 +22,13 @@ function sanitizeMac(mac) {
 class EspHub extends utils.Adapter {
     constructor(options) {
         super({ ...options, name: 'esp-hub' });
-        this.devices    = {};   // MAC → device object
-        this.logs       = [];
-        this.httpServer = null;
-        this.pack       = {};
+        this.devices       = {};   // MAC → device object
+        this.logs          = [];
+        this.flashLog      = [];   // USB flash terminal output
+        this.esptoolReady  = false;
+        this.flashRunning  = false;
+        this.httpServer    = null;
+        this.pack          = {};
         try { this.pack = require('./package.json'); } catch (e) { /* ignore */ }
 
         this.on('ready',  this.onReady.bind(this));
@@ -56,6 +59,7 @@ class EspHub extends utils.Adapter {
             }
             await this.setStateAsync('info.connection', true, true);
             await this._restoreDevices();
+            this._installEsptool();   // async, non-blocking
             this._startServer();
             this._log('INFO', 'SYSTEM', 'ESP-Hub v' + (this.pack.version || ADAPTER_VERSION) +
                 ' gestartet — Port ' + (this.config.webPort || 8093));
@@ -201,6 +205,98 @@ class EspHub extends utils.Adapter {
         }
 
         return reply;
+    }
+
+    // ─── esptool.py Auto-Install ─────────────────────────────────────────
+
+    _installEsptool() {
+        // Check if already available
+        exec('esptool.py version 2>/dev/null || python3 -m esptool version 2>/dev/null', (err, stdout) => {
+            if (!err && stdout && stdout.includes('esptool')) {
+                this.esptoolReady = true;
+                this._log('INFO', 'FLASH', 'esptool.py bereits vorhanden: ' + stdout.split('\n')[0].trim());
+                return;
+            }
+            // Not found → install
+            this._log('INFO', 'FLASH', 'esptool.py nicht gefunden, installiere via pip...');
+            exec('pip3 install esptool --break-system-packages 2>&1', { timeout: 120000 }, (err2, out2) => {
+                if (err2) {
+                    this._log('WARN', 'FLASH', 'pip install fehlgeschlagen: ' + (err2.message || ''));
+                    // Try pip as fallback
+                    exec('pip install esptool --break-system-packages 2>&1', { timeout: 120000 }, (err3, out3) => {
+                        if (err3) {
+                            this._log('ERROR', 'FLASH', 'esptool konnte nicht installiert werden. Manuell: pip3 install esptool');
+                        } else {
+                            this.esptoolReady = true;
+                            this._log('INFO', 'FLASH', 'esptool.py erfolgreich installiert (pip).');
+                        }
+                    });
+                } else {
+                    this.esptoolReady = true;
+                    this._log('INFO', 'FLASH', 'esptool.py erfolgreich installiert.');
+                }
+            });
+        });
+    }
+
+    _getUsbPorts(cb) {
+        exec('ls /dev/ttyUSB* /dev/ttyACM* 2>/dev/null', (err, stdout) => {
+            const ports = (stdout || '').split('\n')
+                .map(p => p.trim())
+                .filter(p => p.length > 0 && p.startsWith('/dev/'));
+            cb(ports);
+        });
+    }
+
+    _flashUsb(port, firmware, flashAddr, baud, cb) {
+        if (this.flashRunning) { cb(new Error('Flash läuft bereits!')); return; }
+        const fpath = path.join(FIRMWARE_DIR, path.basename(firmware));
+        if (!fs.existsSync(fpath)) { cb(new Error('Firmware-Datei nicht gefunden: ' + firmware)); return; }
+
+        this.flashRunning = true;
+        this.flashLog = [];
+
+        const addLine = (line, isErr) => {
+            const entry = { ts: new Date().toISOString(), line, err: isErr || false };
+            this.flashLog.unshift(entry);
+            if (this.flashLog.length > 200) this.flashLog.pop();
+        };
+
+        const addr  = flashAddr || '0x0';
+        const speed = baud      || '460800';
+        const cmd   = 'esptool.py --port ' + port + ' --baud ' + speed +
+                      ' write_flash ' + addr + ' ' + fpath;
+
+        this._log('INFO', 'FLASH', 'Flash-Start: ' + cmd);
+        addLine('▶ ' + cmd, false);
+
+        const { spawn } = require('child_process');
+        const parts = cmd.split(' ');
+        const proc  = spawn(parts[0], parts.slice(1), { stdio: ['ignore', 'pipe', 'pipe'] });
+
+        proc.stdout.on('data', d => {
+            String(d).split('\n').forEach(l => { if (l.trim()) addLine(l.trim(), false); });
+        });
+        proc.stderr.on('data', d => {
+            String(d).split('\n').forEach(l => { if (l.trim()) addLine(l.trim(), true); });
+        });
+        proc.on('close', code => {
+            this.flashRunning = false;
+            if (code === 0) {
+                addLine('✅ Flash erfolgreich abgeschlossen!', false);
+                this._log('INFO', 'FLASH', 'Flash erfolgreich: ' + firmware + ' → ' + port);
+            } else {
+                addLine('❌ Flash fehlgeschlagen (Exit ' + code + ')', true);
+                this._log('ERROR', 'FLASH', 'Flash fehlgeschlagen: Exit ' + code);
+            }
+            cb(code === 0 ? null : new Error('Exit ' + code));
+        });
+        proc.on('error', e => {
+            this.flashRunning = false;
+            addLine('❌ ' + e.message, true);
+            this._log('ERROR', 'FLASH', 'Flash-Fehler: ' + e.message);
+            cb(e);
+        });
     }
 
     // ─── Firmware File Management ────────────────────────────────────────
@@ -508,6 +604,76 @@ class EspHub extends utils.Adapter {
             return;
         }
 
+        // ── USB Ports ──
+        if (url === '/api/ports') {
+            this._getUsbPorts(ports => json({ ports, esptoolReady: this.esptoolReady }));
+            return;
+        }
+
+        // ── Chip detect ──
+        if (url === '/api/chip-detect' && req.method === 'POST') {
+            const body = await readBody();
+            let data = {};
+            try { data = JSON.parse(body.toString()); } catch (e) { /* ignore */ }
+            const port = data.port || '';
+            if (!port) { json({ ok: false, error: 'Kein USB-Port angegeben' }); return; }
+            if (!this.esptoolReady) { json({ ok: false, error: 'esptool.py nicht verfügbar' }); return; }
+            if (this.flashRunning) { json({ ok: false, error: 'Flash läuft bereits' }); return; }
+            this.flashLog = [];
+            this.flashRunning = true;
+            const addLine = (line, isErr) => {
+                const entry = { ts: new Date().toISOString(), line, err: isErr || false };
+                this.flashLog.unshift(entry);
+                if (this.flashLog.length > 200) this.flashLog.pop();
+            };
+            addLine('▶ esptool.py --port ' + port + ' chip_id', false);
+            const { spawn } = require('child_process');
+            const proc = spawn('esptool.py', ['--port', port, 'chip_id'], { stdio: ['ignore', 'pipe', 'pipe'] });
+            proc.stdout.on('data', d => String(d).split('\n').forEach(l => { if (l.trim()) addLine(l.trim(), false); }));
+            proc.stderr.on('data', d => String(d).split('\n').forEach(l => { if (l.trim()) addLine(l.trim(), true); }));
+            proc.on('close', code => {
+                this.flashRunning = false;
+                if (code === 0) {
+                    addLine('✅ Chip erkannt!', false);
+                    this._log('INFO', 'FLASH', 'Chip-Erkennung OK: ' + port);
+                } else {
+                    addLine('❌ Kein ESP erkannt (Exit ' + code + ') — Reset-Taste gedrückt halten beim Verbinden?', true);
+                    this._log('WARN', 'FLASH', 'Chip-Erkennung fehlgeschlagen: ' + port);
+                }
+            });
+            proc.on('error', e => {
+                this.flashRunning = false;
+                addLine('❌ ' + e.message, true);
+            });
+            json({ ok: true });
+            return;
+        }
+
+        // ── Flash Log (polling) ──
+        if (url === '/api/flash-log') {
+            json({ log: this.flashLog.slice(0, 200), running: this.flashRunning });
+            return;
+        }
+
+        // ── Flash via USB ──
+        if (url === '/api/flash-usb' && req.method === 'POST') {
+            const body = await readBody();
+            let data = {};
+            try { data = JSON.parse(body.toString()); } catch (e) { /* ignore */ }
+            const port     = data.port     || '';
+            const firmware = data.firmware || '';
+            const addr     = data.addr     || '0x0';
+            const baud     = data.baud     || '460800';
+            if (!port)     { json({ ok: false, error: 'Kein USB-Port angegeben' }); return; }
+            if (!firmware) { json({ ok: false, error: 'Keine Firmware ausgewählt' }); return; }
+            if (!this.esptoolReady) { json({ ok: false, error: 'esptool.py nicht verfügbar — bitte Adapter neu starten oder manuell installieren' }); return; }
+            if (this.flashRunning) { json({ ok: false, error: 'Flash läuft bereits' }); return; }
+            this.flashLog = [];
+            json({ ok: true, message: 'Flash gestartet...' });
+            this._flashUsb(port, firmware, addr, baud, () => {});
+            return;
+        }
+
         res.writeHead(404, { 'Content-Type': 'text/plain' });
         res.end('Not found: ' + url);
     }
@@ -599,6 +765,17 @@ class EspHub extends utils.Adapter {
             '.modal-box h3{margin-bottom:14px;font-size:16px}',
             '.modal-box input{width:100%;margin-bottom:12px}',
             '.modal-btns{display:flex;gap:8px;justify-content:flex-end}',
+            '.flash-row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px}',
+            '.flash-row label{color:var(--muted);font-size:12px;min-width:80px}',
+            '.flash-row select,.flash-row input{min-width:160px}',
+            '.flash-term{background:var(--bg0);border:1px solid var(--border);border-radius:6px;padding:12px;font-family:var(--mono);font-size:12px;height:340px;overflow-y:auto;display:flex;flex-direction:column-reverse}',
+            '.ft-line{padding:1px 0;line-height:1.5}',
+            '.ft-err{color:var(--red)}',
+            '.ft-ok{color:var(--green)}',
+            '.ft-dim{color:var(--muted)}',
+            '.esptool-badge{display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border-radius:6px;font-size:12px;margin-bottom:14px}',
+            '.esptool-ok{background:rgba(63,185,80,.1);border:1px solid rgba(63,185,80,.3);color:var(--green)}',
+            '.esptool-err{background:rgba(248,81,73,.1);border:1px solid rgba(248,81,73,.3);color:var(--red)}',
         ].join('\n');
 
         const BODY = [
@@ -613,6 +790,7 @@ class EspHub extends utils.Adapter {
             '</header>',
             '<div class="tabs">',
             '  <div class="tab active" data-tab="devices">&#128267; Ger&auml;te</div>',
+            '  <div class="tab" data-tab="flash">&#128268; Programmieren</div>',
             '  <div class="tab" data-tab="logs">&#128203; Logs</div>',
             '  <div class="tab" data-tab="system">&#9881;&#65039; System</div>',
             '</div>',
@@ -634,6 +812,52 @@ class EspHub extends utils.Adapter {
             '    </div>',
             '  </div>',
             '  <div id="device-grid" class="device-grid"></div>',
+            '</div>',
+
+            // ── Flash Panel ──
+            '<div class="panel" id="panel-flash">',
+            '  <div class="card">',
+            '    <h3>&#128268; USB-Programmierung (esptool.py)</h3>',
+            '    <div id="esptool-status" class="esptool-badge esptool-err">&#10007; esptool.py wird gepr&uuml;ft...</div>',
+            '    <div class="flash-row">',
+            '      <label>USB-Port</label>',
+            '      <select id="fl-port"><option value="">-- Port ausw&auml;hlen --</option></select>',
+            '      <button class="btn btn-sm btn-blue" id="fl-refresh-btn">&#8635; Aktualisieren</button>',
+            '      <button class="btn btn-sm" id="fl-detect-btn" disabled>&#128270; ESP erkennen</button>',
+            '    </div>',
+            '    <div class="flash-row">',
+            '      <label>Firmware</label>',
+            '      <select id="fl-fw"><option value="">-- Firmware ausw&auml;hlen --</option></select>',
+            '    </div>',
+            '    <div class="flash-row">',
+            '      <label>Flash-Adresse</label>',
+            '      <input id="fl-addr" value="0x0" style="width:100px">',
+            '      <label style="margin-left:16px">Baud</label>',
+            '      <select id="fl-baud" style="width:120px">',
+            '        <option value="460800">460800</option>',
+            '        <option value="921600">921600</option>',
+            '        <option value="115200">115200</option>',
+            '        <option value="230400">230400</option>',
+            '      </select>',
+            '    </div>',
+            '    <div style="display:flex;gap:10px;align-items:center;margin-bottom:14px">',
+            '      <button class="btn btn-green" id="fl-btn" disabled>&#9889; Flashen</button>',
+            '      <button class="btn btn-sm" id="fl-clear-btn">Terminal leeren</button>',
+            '      <span id="fl-status" style="font-size:12px;color:var(--muted)"></span>',
+            '    </div>',
+            '    <div class="flash-term" id="flash-term">',
+            '      <div class="ft-line ft-dim">Bereit. USB-Port ausw&auml;hlen und Firmware flashen.</div>',
+            '    </div>',
+            '  </div>',
+            '  <div class="card">',
+            '    <h3>Hinweise</h3>',
+            '    <table class="info-table">',
+            '      <tr><td>LXC / Proxmox</td><td style="font-size:12px">USB-Device muss ins LXC durchgereicht sein (lxc.mount.entry in /etc/pve/lxc/&lt;ID&gt;.conf)</td></tr>',
+            '      <tr><td>Berechtigungen</td><td style="font-family:var(--mono);font-size:12px">sudo usermod -aG dialout iobroker</td></tr>',
+            '      <tr><td>Chip-Treiber</td><td style="font-size:12px">CP2102 (cp210x) · CH340 (ch341) · FTDI (ftdi_sio)</td></tr>',
+            '      <tr><td>Flash-Adresse</td><td style="font-size:12px">ESP32: 0x0 &nbsp;|&nbsp; ESP8266: 0x0</td></tr>',
+            '    </table>',
+            '  </div>',
             '</div>',
 
             // ── Logs Panel ──
@@ -708,6 +932,7 @@ class EspHub extends utils.Adapter {
             '    t.classList.add("active");',
             '    var p=document.getElementById("panel-"+t.dataset.tab);',
             '    if(p)p.classList.add("active");',
+            '    if(t.dataset.tab==="flash"){loadPorts();loadFlashFirmwares();}',
             '  });',
             '});',
             '',
@@ -914,7 +1139,145 @@ class EspHub extends utils.Adapter {
             '  });',
             '}',
             '',
-            '// ── Self Update ───────────────────────────────────',
+            '// ── Flash / USB Programming ───────────────────────',
+            'var flashPolling=null;',
+            '',
+            'function loadPorts(){',
+            '  fetch("/api/ports").then(function(r){return r.json();}).then(function(d){',
+            '    var sel=document.getElementById("fl-port");',
+            '    var cur=sel.value;',
+            '    sel.innerHTML=\'<option value="">-- Port ausw\\u00e4hlen --</option>\';',
+            '    d.ports.forEach(function(p){sel.innerHTML+=\'<option value="\'+p+\'">\'+p+\'</option>\';});',
+            '    if(cur&&d.ports.indexOf(cur)>=0)sel.value=cur;',
+            '    var badge=document.getElementById("esptool-status");',
+            '    if(badge){',
+            '      if(d.esptoolReady){',
+            '        badge.className="esptool-badge esptool-ok";',
+            '        badge.innerHTML="&#10003; esptool.py verf\\u00fcgbar";',
+            '      } else {',
+            '        badge.className="esptool-badge esptool-err";',
+            '        badge.innerHTML="&#10007; esptool.py nicht verf\\u00fcgbar &mdash; Adapter neu starten oder: pip3 install esptool";',
+            '      }',
+            '      document.getElementById("fl-btn").disabled=!d.esptoolReady;',
+            '      var db=document.getElementById("fl-detect-btn");',
+            '      if(db)db.disabled=!d.esptoolReady;',
+            '    }',
+            '  }).catch(function(){});',
+            '}',
+            '',
+            'function loadFlashFirmwares(){',
+            '  fetch("/api/firmwares").then(function(r){return r.json();}).then(function(list){',
+            '    var sel=document.getElementById("fl-fw");',
+            '    var cur=sel.value;',
+            '    sel.innerHTML=\'<option value="">-- Firmware ausw\\u00e4hlen --</option>\';',
+            '    list.forEach(function(f){sel.innerHTML+=\'<option value="\'+esc(f.name)+\'">\'+esc(f.name)+\' (\'+fmtSize(f.size)+\')</option>\';});',
+            '    if(cur)sel.value=cur;',
+            '  }).catch(function(){});',
+            '}',
+            '',
+            'function termLine(txt, cls){',
+            '  var term=document.getElementById("flash-term");',
+            '  if(!term)return;',
+            '  var d=document.createElement("div");',
+            '  d.className="ft-line"+(cls?" "+cls:"");',
+            '  d.textContent=txt;',
+            '  term.insertBefore(d,term.firstChild);',
+            '}',
+            '',
+            'function startFlash(){',
+            '  var port=document.getElementById("fl-port").value;',
+            '  var fw=document.getElementById("fl-fw").value;',
+            '  var addr=document.getElementById("fl-addr").value||"0x0";',
+            '  var baud=document.getElementById("fl-baud").value||"460800";',
+            '  if(!port){alert("Bitte USB-Port ausw\\u00e4hlen!");return;}',
+            '  if(!fw){alert("Bitte Firmware ausw\\u00e4hlen!");return;}',
+            '  var btn=document.getElementById("fl-btn");',
+            '  var st=document.getElementById("fl-status");',
+            '  btn.disabled=true;',
+            '  if(st)st.textContent="&#9889; Flashe...";',
+            '  var term=document.getElementById("flash-term");',
+            '  if(term)term.innerHTML="";',
+            '  fetch("/api/flash-usb",{method:"POST",headers:{"Content-Type":"application/json"},',
+            '    body:JSON.stringify({port:port,firmware:fw,addr:addr,baud:baud})})',
+            '  .then(function(r){return r.json();})',
+            '  .then(function(res){',
+            '    if(!res.ok){',
+            '      termLine("\\u274C "+res.error,"ft-err");',
+            '      btn.disabled=false;',
+            '      if(st)st.textContent="Fehler";',
+            '      return;',
+            '    }',
+            '    pollFlashLog();',
+            '  }).catch(function(e){',
+            '    termLine("\\u274C "+e,"ft-err");',
+            '    btn.disabled=false;',
+            '    if(st)st.textContent="Fehler";',
+            '  });',
+            '}',
+            '',
+            'function pollFlashLog(doneCb){',
+            '  fetch("/api/flash-log").then(function(r){return r.json();}).then(function(d){',
+            '    var term=document.getElementById("flash-term");',
+            '    var st=document.getElementById("fl-status");',
+            '    var btn=document.getElementById("fl-btn");',
+            '    if(term){',
+            '      term.innerHTML="";',
+            '      var lines=d.log.slice().reverse();',
+            '      lines.forEach(function(e){',
+            '        var div=document.createElement("div");',
+            '        div.className="ft-line"+(e.err?" ft-err":(e.line&&e.line.startsWith("\\u2705")?" ft-ok":""));',
+            '        div.textContent=e.line;',
+            '        term.insertBefore(div,term.firstChild);',
+            '      });',
+            '    }',
+            '    if(d.running){',
+            '      if(st)st.textContent="\\u23F3 L\\u00e4uft...";',
+            '      flashPolling=setTimeout(function(){pollFlashLog(doneCb);},800);',
+            '    } else {',
+            '      if(st)st.textContent="Fertig";',
+            '      if(btn)btn.disabled=false;',
+            '      flashPolling=null;',
+            '      if(doneCb)doneCb();',
+            '    }',
+            '  }).catch(function(){',
+            '    flashPolling=setTimeout(function(){pollFlashLog(doneCb);},2000);',
+            '  });',
+            '}',
+            '',
+            'document.getElementById("fl-refresh-btn").addEventListener("click",function(){loadPorts();loadFlashFirmwares();});',
+            'document.getElementById("fl-detect-btn").addEventListener("click",function(){',
+            '  var port=document.getElementById("fl-port").value;',
+            '  if(!port){alert("Bitte zuerst einen USB-Port ausw\\u00e4hlen!");return;}',
+            '  var btn=document.getElementById("fl-detect-btn");',
+            '  var st=document.getElementById("fl-status");',
+            '  var term=document.getElementById("flash-term");',
+            '  btn.disabled=true;',
+            '  if(st)st.textContent="\\u{1F50D} Erkenne Chip...";',
+            '  if(term)term.innerHTML="";',
+            '  fetch("/api/chip-detect",{method:"POST",headers:{"Content-Type":"application/json"},',
+            '    body:JSON.stringify({port:port})})',
+            '  .then(function(r){return r.json();})',
+            '  .then(function(res){',
+            '    if(!res.ok){',
+            '      termLine("\\u274C "+res.error,"ft-err");',
+            '      btn.disabled=false;',
+            '      if(st)st.textContent="Fehler";',
+            '      return;',
+            '    }',
+            '    if(st)st.textContent="\\u23F3 Lese Chip-Info...";',
+            '    pollFlashLog(function(){btn.disabled=false;});',
+            '  }).catch(function(e){',
+            '    termLine("\\u274C "+e,"ft-err");',
+            '    btn.disabled=false;',
+            '    if(st)st.textContent="Fehler";',
+            '  });',
+            '});',
+            'document.getElementById("fl-btn").addEventListener("click",startFlash);',
+            'document.getElementById("fl-clear-btn").addEventListener("click",function(){',
+            '  var term=document.getElementById("flash-term");',
+            '  if(term)term.innerHTML=\'<div class="ft-line ft-dim">Terminal geleert.</div>\';',
+            '});',
+            '',
             'document.getElementById("upd-btn").addEventListener("click",function(){',
             '  if(!confirm("Adapter aktualisieren und neu starten?"))return;',
             '  fetch("/api/update",{method:"POST"}).then(function(r){return r.json();})',
