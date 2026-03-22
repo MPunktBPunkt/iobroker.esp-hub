@@ -7,7 +7,7 @@ const fs       = require('fs');
 const path     = require('path');
 const { exec } = require('child_process');
 
-const ADAPTER_VERSION = '0.3.1';
+const ADAPTER_VERSION = '0.3.2';
 const NODE_ONLINE_SEC = 120;
 const FIRMWARE_DIR    = '/tmp/iobroker-esphub-fw';
 const SKETCH_DIR      = '/tmp/iobroker-esphub-sketches';
@@ -1838,7 +1838,7 @@ class EspHub extends utils.Adapter {
             '  var st=document.getElementById("fl-status");',
             '  var term=document.getElementById("flash-term");',
             '  btn.disabled=true;',
-            '  if(st)st.textContent="\\u{1F50D} Erkenne Chip...";',
+            '  if(st)st.textContent="\uD83D\uDD0D Erkenne Chip...";',
             '  if(term)term.innerHTML="";',
             '  fetch("/api/chip-detect",{method:"POST",headers:{"Content-Type":"application/json"},',
             '    body:JSON.stringify({port:port})})',

@@ -1,7 +1,7 @@
 {
   "common": {
     "name": "esp-hub",
-    "version": "0.3.1",
+    "version": "0.3.2",
     "news": {
       "0.1.0": {
         "en": "Initial release: ESP32/ESP8266 device management, heartbeat registration, OTA firmware updates, Web-UI",
@@ -54,6 +54,10 @@
       "0.3.1": {
         "en": "New: Categorized library manager with 20+ libraries (Display, Sensors, LED, Energy...)",
         "de": "Neu: Kategorisierter Bibliotheks-Manager mit 20+ Bibliotheken (Display, Sensoren, LED, Energie...)"
+      },
+      "0.3.2": {
+        "en": "Bugfix: SyntaxError from invalid unicode escape in browser JS",
+        "de": "Bugfix: SyntaxError durch ungültiges Unicode-Escape im Browser-JS"
       }
     },
     "title": "ESP-Hub",
