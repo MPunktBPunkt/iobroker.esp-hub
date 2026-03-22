@@ -7,7 +7,7 @@ const fs       = require('fs');
 const path     = require('path');
 const { exec } = require('child_process');
 
-const ADAPTER_VERSION = '0.3.2';
+const ADAPTER_VERSION = '0.3.3';
 const NODE_ONLINE_SEC = 120;
 const FIRMWARE_DIR    = '/tmp/iobroker-esphub-fw';
 const SKETCH_DIR      = '/tmp/iobroker-esphub-sketches';
@@ -1985,6 +1985,7 @@ class EspHub extends utils.Adapter {
             '  });',
             '});',
             '',
+            'document.getElementById("ac-install-btn").addEventListener("click",function(){',
             '  if(!confirm("arduino-cli neu installieren?"))return;',
             '  fetch("/api/arduino-install",{method:"POST"}).then(function(){',
             '    setTimeout(loadArduinoStatus,5000);',
