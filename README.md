@@ -1,6 +1,6 @@
 # iobroker.esp-hub
 
-![Version](https://img.shields.io/badge/version-0.3.4-blue)
+![Version](https://img.shields.io/badge/version-0.3.6-blue)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 [![Donate](https://img.shields.io/badge/Donate-PayPal-00457C.svg?logo=paypal)](https://www.paypal.com/donate/?business=martin%40bchmnn.de&currency_code=EUR)
 
@@ -75,6 +75,19 @@ Die Standard-Firmware `esp-hub-base` wird direkt mit dem Adapter mitgeliefert un
 4. Board wählen → **⚡ Kompilieren**
 5. .bin erscheint automatisch im Programmieren-Tab
 
+### Partition Scheme (Speicheraufteilung)
+
+Für den ESP32-S3 WROOM-1 (4MB Flash) empfiehlt sich **Minimal SPIFFS**:
+
+| Schema | APP | OTA | Empfehlung |
+|---|---|---|---|
+| Default 4MB with spiffs | 1.2MB | ✅ | ❌ zu eng (89% belegt) |
+| **Minimal SPIFFS** | **1.9MB** | ✅ | ✅ **empfohlen** (~57% belegt) |
+| No OTA (2MB APP) | 2MB | ❌ | ⚠️ kein OTA möglich |
+| Huge APP | 3MB | ❌ | ⚠️ kein OTA möglich |
+
+Die 8M/16M/32M-Schemata erfordern Boards mit entsprechend größerem Flash-Chip — nicht für WROOM-1 (4MB) geeignet.
+
 ### Bibliotheken (Arduino Library Manager)
 
 - **WiFiManager** (tablatronix/tzapu) — WLAN Captive Portal
@@ -92,6 +105,8 @@ Display, Sensoren, LED, Aktoren, Kommunikation, Energie & Messtechnik.
 5. ESP erscheint im Geräte-Tab
 
 > **WLAN zurücksetzen:** BOOT-Taste beim Einschalten 3 Sekunden halten
+
+> **ESP32-S3:** Rechten USB-Port (mit **COM**-Beschriftung) verwenden. RST-Taste kurz drücken bevor du auf Flashen klickst — der S3 muss manuell in den Flash-Modus.
 
 ---
 
@@ -159,6 +174,17 @@ GNU General Public License v3.0 © MPunktBPunkt — siehe [LICENSE](LICENSE)
 ---
 
 ## Changelog
+
+### 0.3.6
+- Fix: Partition min_spiffs fuer ESP32-S3 und D1 Mini (~57% statt 89% Flash-Auslastung)
+- Neu: ESP32-S3 USB-Hinweis im Programmieren-Tab
+
+### 0.3.5
+- Neu: ESP32-S3 WROOM-1 (4MB) mit korrekter FQBN im Board-Dropdown
+- Neu: CH343-Treiber-Hinweis
+
+### 0.3.4
+- Bugfix: JS-Fehler in Event-Handlern behoben
 
 ### 0.3.1
 - Neu: Bibliotheks-Manager — 6 Kategorien, 20+ Bibliotheken mit Checkboxen (Display, Sensoren, LED, Energie...)
