@@ -7,7 +7,7 @@ const fs       = require('fs');
 const path     = require('path');
 const { exec } = require('child_process');
 
-const ADAPTER_VERSION = '0.4.0';
+const ADAPTER_VERSION = '0.4.1';
 const NODE_ONLINE_SEC = 120;
 const FIRMWARE_DIR    = '/tmp/iobroker-esphub-fw';
 const SKETCH_DIR      = '/tmp/iobroker-esphub-sketches';
@@ -1679,7 +1679,7 @@ class EspHub extends utils.Adapter {
             '    h+=\'<div class="dc-meta">MAC: \'+esc(d.mac||"")+\' &nbsp;|\';',
             '    h+=\' IP: <a href="http://\'+esc(d.ip||"")+\'" target="_blank">\'+esc(d.ip||"?")+\'</a>&nbsp;|\';',
             '    h+=\' v\'+esc(d.version||"?")+\'<br>\';',
-            '    h+=\'RSSI: \'+esc(d.rssi||0)+\' dBm &nbsp;| Uptime: \'+fmtUptime(d.uptime||0);\';',
+            '    h+=\'RSSI: \'+esc(d.rssi||0)+\' dBm &nbsp;| Uptime: \'+fmtUptime(d.uptime||0);',
             '    h+=\'<br>Heap: \'+fmtSize(d.freeHeap||0);',
             '    if(d.freeSketch>0)h+=\' &nbsp;| Flash frei: \'+fmtSize(d.freeSketch);',
             '    h+=\' &nbsp;| \'+fmtAge(d.lastSeen)+\'</div>\';',
