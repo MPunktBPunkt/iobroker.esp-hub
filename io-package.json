@@ -1,7 +1,7 @@
 {
   "common": {
     "name": "esp-hub",
-    "version": "0.4.1",
+    "version": "0.4.2",
     "news": {
       "0.1.0": {
         "en": "Initial release: ESP32/ESP8266 device management, heartbeat registration, OTA firmware updates, Web-UI",
@@ -82,6 +82,10 @@
       "0.4.1": {
         "en": "Bugfix: stray semicolon in device card JS (SyntaxError line 542)",
         "de": "Bugfix: ueberzähliges Semikolon in Gerätekarte JS (SyntaxError Zeile 542)"
+      },
+      "0.4.2": {
+        "en": "Fix: OTA URL uses actual server IP from ESP heartbeat connection (not adapterHost config)",
+        "de": "Fix: OTA-URL nutzt echte Server-IP aus ESP-Heartbeat-Verbindung (nicht adapterHost-Config)"
       }
     },
     "title": "ESP-Hub",

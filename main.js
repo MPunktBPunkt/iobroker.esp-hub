@@ -7,7 +7,7 @@ const fs       = require('fs');
 const path     = require('path');
 const { exec } = require('child_process');
 
-const ADAPTER_VERSION = '0.4.1';
+const ADAPTER_VERSION = '0.4.2';
 const NODE_ONLINE_SEC = 120;
 const FIRMWARE_DIR    = '/tmp/iobroker-esphub-fw';
 const SKETCH_DIR      = '/tmp/iobroker-esphub-sketches';
@@ -153,7 +153,7 @@ class EspHub extends utils.Adapter {
 
     // ─── Device Registration / Heartbeat ─────────────────────────────────
 
-    async _handleRegister(body) {
+    async _handleRegister(body, localIp) {
         const mac = sanitizeMac(body.mac || '');
         if (!mac || mac.length < 6) return { ok: false, error: 'Invalid MAC' };
 
@@ -162,6 +162,9 @@ class EspHub extends utils.Adapter {
 
         if (!this.devices[mac]) this.devices[mac] = { mac };
         const d = this.devices[mac];
+
+        // Store the IP the ESP used to reach us — used for OTA URL
+        if (localIp) d.serverIp = localIp;
 
         d.ip         = body.ip         || d.ip         || '';
         d.name       = d.name          || body.name    || ('ESP-' + mac.slice(-4));
@@ -748,7 +751,9 @@ class EspHub extends utils.Adapter {
             const body = await readBody();
             let data = {};
             try { data = JSON.parse(body.toString()); } catch (e) { /* ignore */ }
-            json(await this._handleRegister(data));
+            // Use the actual local IP the ESP connected to — not the config
+            const localIp = req.socket.localAddress.replace(/^::ffff:/, '');
+            json(await this._handleRegister(data, localIp));
             return;
         }
 
@@ -822,7 +827,9 @@ class EspHub extends utils.Adapter {
             const mac      = sanitizeMac(data.mac || '');
             const firmware = path.basename(data.firmware || '');
             if (!mac || !firmware) { json({ ok: false, error: 'mac + firmware erforderlich' }); return; }
-            const host   = this.config.adapterHost || '127.0.0.1';
+            // Use the IP the ESP actually connected to — falls back to config
+            const host   = (this.devices[mac] && this.devices[mac].serverIp)
+                         || this.config.adapterHost || '127.0.0.1';
             const port   = this.config.webPort || 8093;
             const otaUrl = 'http://' + host + ':' + port + '/firmware/' + encodeURIComponent(firmware);
             await this.setStateAsync('devices.' + mac + '.otaUrl', otaUrl, true).catch(() => {});
