@@ -7,7 +7,7 @@ const fs       = require('fs');
 const path     = require('path');
 const { exec } = require('child_process');
 
-const ADAPTER_VERSION = '0.4.2';
+const ADAPTER_VERSION = '0.4.3';
 const NODE_ONLINE_SEC = 120;
 const FIRMWARE_DIR    = '/tmp/iobroker-esphub-fw';
 const SKETCH_DIR      = '/tmp/iobroker-esphub-sketches';
@@ -402,8 +402,16 @@ class EspHub extends utils.Adapter {
         this._log('INFO', 'COMPILE', 'Starte Kompilierung: ' + sketchName + ' [' + fqbn + ']');
 
         const { spawn } = require('child_process');
-        const parts = cmd.split(' ');
-        const proc  = spawn(parts[0], parts.slice(1), { stdio: ['ignore', 'pipe', 'pipe'] });
+        // Use array args to avoid shell splitting issues with FQBN parameters
+        const cliParts = cli.split(' ');
+        const args = [
+            ...cliParts.slice(1),
+            'compile',
+            '--fqbn', fqbn,
+            '--output-dir', outDir,
+            sketchPath
+        ];
+        const proc = spawn(cliParts[0], args, { stdio: ['ignore', 'pipe', 'pipe'] });
 
         proc.stdout.on('data', d => String(d).split('\n').forEach(l => {
             const clean = l.replace(/\x1b\[[0-9;]*m/g, '').trim();

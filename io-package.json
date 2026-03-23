@@ -1,7 +1,7 @@
 {
   "common": {
     "name": "esp-hub",
-    "version": "0.4.2",
+    "version": "0.4.3",
     "news": {
       "0.1.0": {
         "en": "Initial release: ESP32/ESP8266 device management, heartbeat registration, OTA firmware updates, Web-UI",
@@ -86,6 +86,10 @@
       "0.4.2": {
         "en": "Fix: OTA URL uses actual server IP from ESP heartbeat connection (not adapterHost config)",
         "de": "Fix: OTA-URL nutzt echte Server-IP aus ESP-Heartbeat-Verbindung (nicht adapterHost-Config)"
+      },
+      "0.4.3": {
+        "en": "Bugfix: FQBN with partition params now passed as array args to spawn (not string split)",
+        "de": "Bugfix: FQBN mit Partition-Parametern wird als Array an spawn uebergeben (nicht String-Split)"
       }
     },
     "title": "ESP-Hub",

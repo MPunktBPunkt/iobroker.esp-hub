@@ -1,6 +1,6 @@
 # iobroker.esp-hub
 
-![Version](https://img.shields.io/badge/version-0.4.2-blue)
+![Version](https://img.shields.io/badge/version-0.4.3-blue)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 [![Donate](https://img.shields.io/badge/Donate-PayPal-00457C.svg?logo=paypal)](https://www.paypal.com/donate/?business=martin%40bchmnn.de&currency_code=EUR)
 
@@ -55,7 +55,7 @@ Web-UI: `http://<ioBroker-IP>:8093`
 
 | Tab | Inhalt |
 |---|---|
-| 📡 Geräte | Alle registrierten ESPs mit Status, IOs, OTA-Push |
+| 📡 Geräte | Alle ESPs mit Chip-Badge, Flash-Balken, Pinout-Panel, OTA-Push |
 | 🔌 Programmieren | ESP erkennen, USB-Flash, Serieller Monitor |
 | ⚙️ Kompilieren | arduino-cli, Bibliotheks-Manager, .ino → .bin |
 | 📋 Logs | Adapter-Logs mit Filter und Export |
@@ -105,6 +105,8 @@ Display, Sensoren, LED, Aktoren, Kommunikation, Energie & Messtechnik.
 5. ESP erscheint im Geräte-Tab
 
 > **WLAN zurücksetzen:** BOOT-Taste beim Einschalten 3 Sekunden halten
+
+> **Web-UI am ESP:** Nach dem Flashen erreichbar unter `http://<ESP-IP>/` — Status + OTA-Tab
 
 > **ESP32-S3:** Rechten USB-Port (mit **COM**-Beschriftung) verwenden. RST-Taste kurz drücken bevor du auf Flashen klickst — der S3 muss manuell in den Flash-Modus.
 
@@ -175,12 +177,23 @@ GNU General Public License v3.0 © MPunktBPunkt — siehe [LICENSE](LICENSE)
 
 ## Changelog
 
+### 0.4.2
+- Fix: OTA-URL nutzt echte Server-IP aus ESP-Verbindung (nicht Config)
+
+### 0.4.1
+- Bugfix: JS SyntaxError in Geraetekarte
+
 ### 0.4.0
 - Neu: Chip-Typ (ESP32-S3/ESP32/ESP8266) im Dashboard-Badge
 - Neu: Freier Flash-Speicher als Fortschrittsbalken in Geraetekarte
 - Neu: Aufklappbares Pinout-Panel pro Geraet
 - Fix: Delete-Button immer sichtbar
 - Firmware v1.4.0: chipModel + freeSketch im Heartbeat
+
+### Firmware v1.5.0
+- Neu: Web-UI direkt am ESP (Port 80) mit Status + OTA-Tab
+- Status: Chip, IP, RSSI, Uptime, RAM/Flash-Balken
+- OTA: .bin Drag+Drop direkt auf ESP hochladen
 
 ### 0.3.6
 - Fix: Partition min_spiffs fuer ESP32-S3 und D1 Mini (~57% statt 89% Flash-Auslastung)
