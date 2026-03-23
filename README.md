@@ -1,6 +1,6 @@
 # iobroker.esp-hub
 
-![Version](https://img.shields.io/badge/version-0.3.6-blue)
+![Version](https://img.shields.io/badge/version-0.4.0-blue)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 [![Donate](https://img.shields.io/badge/Donate-PayPal-00457C.svg?logo=paypal)](https://www.paypal.com/donate/?business=martin%40bchmnn.de&currency_code=EUR)
 
@@ -174,6 +174,13 @@ GNU General Public License v3.0 © MPunktBPunkt — siehe [LICENSE](LICENSE)
 ---
 
 ## Changelog
+
+### 0.4.0
+- Neu: Chip-Typ (ESP32-S3/ESP32/ESP8266) im Dashboard-Badge
+- Neu: Freier Flash-Speicher als Fortschrittsbalken in Geraetekarte
+- Neu: Aufklappbares Pinout-Panel pro Geraet
+- Fix: Delete-Button immer sichtbar
+- Firmware v1.4.0: chipModel + freeSketch im Heartbeat
 
 ### 0.3.6
 - Fix: Partition min_spiffs fuer ESP32-S3 und D1 Mini (~57% statt 89% Flash-Auslastung)

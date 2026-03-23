@@ -1,7 +1,7 @@
 {
   "common": {
     "name": "esp-hub",
-    "version": "0.3.4",
+    "version": "0.4.0",
     "news": {
       "0.1.0": {
         "en": "Initial release: ESP32/ESP8266 device management, heartbeat registration, OTA firmware updates, Web-UI",
@@ -66,6 +66,18 @@
       "0.3.4": {
         "en": "Bugfix: missing function wrapper for Adapter aktualisieren button",
         "de": "Bugfix: fehlende Funktion um Adapter-aktualisieren-Button"
+      },
+      "0.3.5": {
+        "en": "New: ESP32-S3 WROOM-1 (4MB) with correct FQBN in board dropdown, CH343 driver hint",
+        "de": "Neu: ESP32-S3 WROOM-1 (4MB) mit korrekter FQBN im Board-Dropdown, CH343-Treiber-Hinweis"
+      },
+      "0.3.6": {
+        "en": "Fix: min_spiffs partition for ESP32-S3 and D1 Mini (reduces flash usage from 89% to ~57%), ESP32-S3 USB hint",
+        "de": "Fix: min_spiffs Partition fuer ESP32-S3 und D1 Mini (Flash-Auslastung von 89% auf ~57%), ESP32-S3 USB-Hinweis"
+      },
+      "0.4.0": {
+        "en": "New: chipModel + freeSketch in heartbeat and device cards, pinout panel, fixed buttons",
+        "de": "Neu: chipModel + freeSketch im Heartbeat und Geraetekarten, Pinout-Panel, Buttons repariert"
       }
     },
     "title": "ESP-Hub",

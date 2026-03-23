@@ -7,7 +7,7 @@ const fs       = require('fs');
 const path     = require('path');
 const { exec } = require('child_process');
 
-const ADAPTER_VERSION = '0.3.4';
+const ADAPTER_VERSION = '0.4.0';
 const NODE_ONLINE_SEC = 120;
 const FIRMWARE_DIR    = '/tmp/iobroker-esphub-fw';
 const SKETCH_DIR      = '/tmp/iobroker-esphub-sketches';
@@ -121,18 +121,20 @@ class EspHub extends utils.Adapter {
         }).catch(() => {});
 
         const states = [
-            { id: 'name',     type: 'string',  role: 'text',             write: true,  def: 'ESP-' + mac.slice(-4), desc: 'Gerätename' },
-            { id: 'ip',       type: 'string',  role: 'info.ip',          write: false, def: '',     desc: 'IP-Adresse' },
-            { id: 'mac',      type: 'string',  role: 'info.address',     write: false, def: '',     desc: 'MAC-Adresse' },
-            { id: 'hwType',   type: 'string',  role: 'text',             write: false, def: 'esp32',desc: 'Hardware-Typ (esp32/esp8266)' },
-            { id: 'version',  type: 'string',  role: 'text',             write: false, def: '',     desc: 'Firmware-Version' },
-            { id: 'rssi',     type: 'number',  role: 'value',            write: false, def: 0,      desc: 'WLAN-Signal', unit: 'dBm' },
-            { id: 'uptime',   type: 'number',  role: 'value',            write: false, def: 0,      desc: 'Uptime', unit: 's' },
-            { id: 'freeHeap', type: 'number',  role: 'value',            write: false, def: 0,      desc: 'Freier Heap', unit: 'Bytes' },
-            { id: 'lastSeen', type: 'number',  role: 'value.time',       write: false, def: 0,      desc: 'Letzter Heartbeat' },
-            { id: 'online',   type: 'boolean', role: 'indicator.connected', write: false, def: false, desc: 'Online' },
-            { id: 'ios',      type: 'string',  role: 'json',             write: false, def: '{}',   desc: 'IO-Status als JSON' },
-            { id: 'otaUrl',   type: 'string',  role: 'url',              write: true,  def: '',     desc: 'OTA Firmware-URL (für nächsten Heartbeat)' },
+            { id: 'name',        type: 'string',  role: 'text',                write: true,  def: 'ESP-' + mac.slice(-4), desc: 'Gerätename' },
+            { id: 'ip',          type: 'string',  role: 'info.ip',             write: false, def: '',      desc: 'IP-Adresse' },
+            { id: 'mac',         type: 'string',  role: 'info.address',        write: false, def: '',      desc: 'MAC-Adresse' },
+            { id: 'hwType',      type: 'string',  role: 'text',                write: false, def: 'esp32', desc: 'Hardware-Typ (esp32/esp8266)' },
+            { id: 'chipModel',   type: 'string',  role: 'text',                write: false, def: '',      desc: 'Chip-Modell (z.B. ESP32-S3)' },
+            { id: 'version',     type: 'string',  role: 'text',                write: false, def: '',      desc: 'Firmware-Version' },
+            { id: 'rssi',        type: 'number',  role: 'value',               write: false, def: 0,       desc: 'WLAN-Signal', unit: 'dBm' },
+            { id: 'uptime',      type: 'number',  role: 'value',               write: false, def: 0,       desc: 'Uptime', unit: 's' },
+            { id: 'freeHeap',    type: 'number',  role: 'value',               write: false, def: 0,       desc: 'Freier Heap', unit: 'Bytes' },
+            { id: 'freeSketch',  type: 'number',  role: 'value',               write: false, def: 0,       desc: 'Freier Flash-Speicher', unit: 'Bytes' },
+            { id: 'lastSeen',    type: 'number',  role: 'value.time',          write: false, def: 0,       desc: 'Letzter Heartbeat' },
+            { id: 'online',      type: 'boolean', role: 'indicator.connected', write: false, def: false,   desc: 'Online' },
+            { id: 'ios',         type: 'string',  role: 'json',                write: false, def: '{}',    desc: 'IO-Status als JSON' },
+            { id: 'otaUrl',      type: 'string',  role: 'url',                 write: true,  def: '',      desc: 'OTA Firmware-URL (für nächsten Heartbeat)' },
         ];
 
         for (const s of states) {
@@ -161,13 +163,15 @@ class EspHub extends utils.Adapter {
         if (!this.devices[mac]) this.devices[mac] = { mac };
         const d = this.devices[mac];
 
-        d.ip       = body.ip       || d.ip       || '';
-        d.name     = d.name        || body.name   || ('ESP-' + mac.slice(-4));
-        d.hwType   = body.hwType   || body.type   || d.hwType || 'esp32';
-        d.version  = body.version  || d.version   || '0.0.0';
-        d.rssi     = (typeof body.rssi    === 'number') ? body.rssi    : (d.rssi    || 0);
-        d.uptime   = (typeof body.uptime  === 'number') ? body.uptime  : (d.uptime  || 0);
-        d.freeHeap = (typeof body.freeHeap=== 'number') ? body.freeHeap: (d.freeHeap|| 0);
+        d.ip         = body.ip         || d.ip         || '';
+        d.name       = d.name          || body.name    || ('ESP-' + mac.slice(-4));
+        d.hwType     = body.hwType     || body.type    || d.hwType || 'esp32';
+        d.chipModel  = body.chipModel  || d.chipModel  || '';
+        d.version    = body.version    || d.version    || '0.0.0';
+        d.rssi       = (typeof body.rssi     === 'number') ? body.rssi     : (d.rssi     || 0);
+        d.uptime     = (typeof body.uptime   === 'number') ? body.uptime   : (d.uptime   || 0);
+        d.freeHeap   = (typeof body.freeHeap === 'number') ? body.freeHeap : (d.freeHeap || 0);
+        d.freeSketch = (typeof body.freeSketch=== 'number') ? body.freeSketch:(d.freeSketch||0);
         d.lastSeen = now;
         d.online   = true;
 
@@ -179,17 +183,19 @@ class EspHub extends utils.Adapter {
 
         // Write states
         const p = 'devices.' + mac + '.';
-        await this.setStateAsync(p + 'ip',       d.ip,       true);
-        await this.setStateAsync(p + 'name',     d.name,     true);
-        await this.setStateAsync(p + 'mac',      mac,        true);
-        await this.setStateAsync(p + 'hwType',   d.hwType,   true);
-        await this.setStateAsync(p + 'version',  d.version,  true);
-        await this.setStateAsync(p + 'rssi',     d.rssi,     true);
-        await this.setStateAsync(p + 'uptime',   d.uptime,   true);
-        await this.setStateAsync(p + 'freeHeap', d.freeHeap, true);
-        await this.setStateAsync(p + 'lastSeen', now,        true);
-        await this.setStateAsync(p + 'online',   true,       true);
-        await this.setStateAsync(p + 'ios',      d.ios,      true);
+        await this.setStateAsync(p + 'ip',         d.ip,         true);
+        await this.setStateAsync(p + 'name',       d.name,       true);
+        await this.setStateAsync(p + 'mac',        mac,          true);
+        await this.setStateAsync(p + 'hwType',     d.hwType,     true);
+        await this.setStateAsync(p + 'chipModel',  d.chipModel,  true);
+        await this.setStateAsync(p + 'version',    d.version,    true);
+        await this.setStateAsync(p + 'rssi',       d.rssi,       true);
+        await this.setStateAsync(p + 'uptime',     d.uptime,     true);
+        await this.setStateAsync(p + 'freeHeap',   d.freeHeap,   true);
+        await this.setStateAsync(p + 'freeSketch', d.freeSketch, true);
+        await this.setStateAsync(p + 'lastSeen',   now,          true);
+        await this.setStateAsync(p + 'online',     true,         true);
+        await this.setStateAsync(p + 'ios',        d.ios,        true);
 
         if (isNew) {
             this._log('INFO', 'DEVICE', 'Neues Gerät: ' + d.name + ' [' + mac + '] ' + d.ip + ' v' + d.version);
@@ -1294,7 +1300,8 @@ class EspHub extends utils.Adapter {
             '    <table class="info-table">',
             '      <tr><td>LXC / Proxmox</td><td style="font-size:12px">USB-Device muss ins LXC durchgereicht sein (lxc.mount.entry in /etc/pve/lxc/&lt;ID&gt;.conf)</td></tr>',
             '      <tr><td>Berechtigungen</td><td style="font-family:var(--mono);font-size:12px">sudo usermod -aG dialout iobroker</td></tr>',
-            '      <tr><td>Chip-Treiber</td><td style="font-size:12px">CP2102 (cp210x) · CH340 (ch341) · FTDI (ftdi_sio)</td></tr>',
+            '      <tr><td>ESP32-S3</td><td style="font-size:12px">Rechten USB-Port (COM-Beschriftung) verwenden + RST-Taste vor dem Verbinden dr&uuml;cken</td></tr>',
+            '      <tr><td>Chip-Treiber</td><td style="font-size:12px">CP210x (cp210x) · CH340/CH341 (ch341) · CH343 (ch343) · FTDI (ftdi_sio)</td></tr>',
             '      <tr><td>Flash-Adresse</td><td style="font-size:12px">ESP32: 0x0 &nbsp;|&nbsp; ESP8266: 0x0</td></tr>',
             '    </table>',
             '  </div>',
@@ -1416,9 +1423,11 @@ class EspHub extends utils.Adapter {
             '    <div class="flash-row">',
             '      <label>Board</label>',
             '      <select id="cp-board">',
-            '        <option value="esp32:esp32:d1_mini32">Wemos D1 Mini ESP32</option>',
+            '        <option value="esp32:esp32:d1_mini32:PartitionScheme=min_spiffs">Wemos D1 Mini ESP32 (empfohlen)</option>',
+            '        <option value="esp32:esp32:d1_mini32">Wemos D1 Mini ESP32 (Standard)</option>',
             '        <option value="esp32:esp32:esp32">ESP32 Dev Module</option>',
-            '        <option value="esp32:esp32:esp32s3">ESP32-S3 Dev Module</option>',
+            '        <option value="esp32:esp32:esp32s3:FlashSize=4M,PartitionScheme=min_spiffs,CPUFreq=240,FlashMode=qio,FlashFreq=80">ESP32-S3 WROOM-1 (4MB, empfohlen)</option>',
+            '        <option value="esp32:esp32:esp32s3:FlashSize=4M,PartitionScheme=default,CPUFreq=240,FlashMode=qio,FlashFreq=80">ESP32-S3 WROOM-1 (4MB, Standard)</option>',
             '        <option value="esp32:esp32:esp32c3">ESP32-C3 Dev Module</option>',
             '        <option value="esp32:esp32:esp32s2">ESP32-S2 Dev Module</option>',
             '        <option value="esp8266:esp8266:nodemcuv2">NodeMCU 1.0 (ESP8266)</option>',
@@ -1527,11 +1536,112 @@ class EspHub extends utils.Adapter {
             '  if(s<3600)return "vor "+Math.floor(s/60)+"min";',
             '  return "vor "+Math.floor(s/3600)+"h";',
             '}',
+            'function fmtUptime(s){',
+            '  if(s<60)return s+"s";',
+            '  if(s<3600)return Math.floor(s/60)+"min "+( s%60)+"s";',
+            '  var h=Math.floor(s/3600);var m=Math.floor((s%3600)/60);',
+            '  return h+"h "+m+"min";',
+            '}',
             'function esc(s){',
             '  return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");',
             '}',
             '',
             '// ── Render Devices ────────────────────────────────',
+            'var PINOUTS={',
+            '  "ESP32-S3":[',
+            '    {p:"GPIO0",f:"BOOT / Touch"},',
+            '    {p:"GPIO1",f:"TX0 / Touch"},',
+            '    {p:"GPIO2",f:"Touch / ADC"},',
+            '    {p:"GPIO3",f:"ADC / Touch"},',
+            '    {p:"GPIO4",f:"ADC / Touch"},',
+            '    {p:"GPIO5",f:"ADC / Touch"},',
+            '    {p:"GPIO6",f:"ADC / Touch"},',
+            '    {p:"GPIO7",f:"ADC / Touch"},',
+            '    {p:"GPIO8",f:"ADC / Touch"},',
+            '    {p:"GPIO9",f:"ADC / Touch"},',
+            '    {p:"GPIO10",f:"ADC / Touch"},',
+            '    {p:"GPIO11",f:"ADC"},',
+            '    {p:"GPIO12",f:"ADC"},',
+            '    {p:"GPIO13",f:"ADC"},',
+            '    {p:"GPIO14",f:"ADC"},',
+            '    {p:"GPIO15",f:"ADC"},',
+            '    {p:"GPIO16",f:"ADC"},',
+            '    {p:"GPIO17",f:"ADC"},',
+            '    {p:"GPIO18",f:"ADC"},',
+            '    {p:"GPIO19",f:"USB D- (nativ)"},',
+            '    {p:"GPIO20",f:"USB D+ (nativ)"},',
+            '    {p:"GPIO21",f:"I2C SDA (Standard)"},',
+            '    {p:"GPIO35",f:"I2C SCL (Standard)"},',
+            '    {p:"GPIO36",f:"SPI MISO"},',
+            '    {p:"GPIO37",f:"SPI CLK"},',
+            '    {p:"GPIO38",f:"SPI MOSI"},',
+            '    {p:"GPIO39",f:"SPI CS"},',
+            '    {p:"GPIO40",f:"UART1 RX"},',
+            '    {p:"GPIO41",f:"UART1 TX"},',
+            '    {p:"GPIO42",f:"JTAG MTMS"},',
+            '    {p:"GPIO43",f:"UART0 TX"},',
+            '    {p:"GPIO44",f:"UART0 RX"},',
+            '    {p:"GPIO45",f:"Boot-Modus Strapping"},',
+            '    {p:"GPIO46",f:"Boot-Modus Strapping"},',
+            '    {p:"GPIO47",f:"SPI (FSPI D)"},',
+            '    {p:"GPIO48",f:"RGB LED / SPI (FSPI CLK)"},',
+            '  ],',
+            '  "ESP32":[',
+            '    {p:"GPIO0", f:"BOOT / Touch"},',
+            '    {p:"GPIO2", f:"onboard LED / Touch"},',
+            '    {p:"GPIO4", f:"IO / Touch / ADC"},',
+            '    {p:"GPIO5", f:"IO / SPI CS"},',
+            '    {p:"GPIO12",f:"IO / Touch / ADC (Boot-Strapping)"},',
+            '    {p:"GPIO13",f:"IO / Touch / ADC"},',
+            '    {p:"GPIO14",f:"IO / Touch / ADC"},',
+            '    {p:"GPIO15",f:"IO / Touch / ADC (Boot-Strapping)"},',
+            '    {p:"GPIO16",f:"IO / UART2 RX"},',
+            '    {p:"GPIO17",f:"IO / UART2 TX"},',
+            '    {p:"GPIO18",f:"SPI SCK / IO"},',
+            '    {p:"GPIO19",f:"SPI MISO / IO"},',
+            '    {p:"GPIO21",f:"I2C SDA (Standard)"},',
+            '    {p:"GPIO22",f:"I2C SCL (Standard)"},',
+            '    {p:"GPIO23",f:"SPI MOSI / IO"},',
+            '    {p:"GPIO25",f:"DAC1 / ADC"},',
+            '    {p:"GPIO26",f:"DAC2 / ADC"},',
+            '    {p:"GPIO27",f:"IO / Touch / ADC"},',
+            '    {p:"GPIO32",f:"IO / Touch / ADC"},',
+            '    {p:"GPIO33",f:"IO / Touch / ADC"},',
+            '    {p:"GPIO34",f:"Input only / ADC"},',
+            '    {p:"GPIO35",f:"Input only / ADC"},',
+            '    {p:"GPIO36",f:"Input only / ADC (VP)"},',
+            '    {p:"GPIO39",f:"Input only / ADC (VN)"},',
+            '    {p:"GPIO1", f:"UART0 TX (USB-Serial)"},',
+            '    {p:"GPIO3", f:"UART0 RX (USB-Serial)"},',
+            '  ],',
+            '  "ESP8266":[',
+            '    {p:"D0 / GPIO16",f:"IO (kein Interrupt/PWM/I2C)"},',
+            '    {p:"D1 / GPIO5", f:"I2C SCL (Standard)"},',
+            '    {p:"D2 / GPIO4", f:"I2C SDA (Standard)"},',
+            '    {p:"D3 / GPIO0", f:"BOOT / IO (10k Pull-up)"},',
+            '    {p:"D4 / GPIO2", f:"onboard LED / TX1 (10k Pull-up)"},',
+            '    {p:"D5 / GPIO14",f:"SPI SCK / IO"},',
+            '    {p:"D6 / GPIO12",f:"SPI MISO / IO"},',
+            '    {p:"D7 / GPIO13",f:"SPI MOSI / IO"},',
+            '    {p:"D8 / GPIO15",f:"SPI CS / IO (10k Pull-down)"},',
+            '    {p:"A0",         f:"ADC (0-1V, 10bit)"},',
+            '    {p:"TX / GPIO1", f:"UART0 TX (USB-Serial)"},',
+            '    {p:"RX / GPIO3", f:"UART0 RX (USB-Serial)"},',
+            '  ]',
+            '};',
+            '',
+            'function getPinout(d){',
+            '  var cm=d.chipModel||"";',
+            '  if(cm.indexOf("S3")>=0)return PINOUTS["ESP32-S3"];',
+            '  if(cm.indexOf("8266")>=0||((d.hwType||"").indexOf("8266")>=0))return PINOUTS["ESP8266"];',
+            '  return PINOUTS["ESP32"];',
+            '}',
+            '',
+            'function togglePinout(mac){',
+            '  var el=document.getElementById("pinout-"+mac);',
+            '  if(el)el.style.display=el.style.display==="none"?"block":"none";',
+            '}',
+            '',
             'function renderDevices(){',
             '  var grid=document.getElementById("device-grid");',
             '  var total=devices.length;',
@@ -1552,21 +1662,48 @@ class EspHub extends utils.Adapter {
             '    Object.keys(ios).forEach(function(k){',
             '      var v=ios[k];',
             '      var val=(typeof v==="object")?(v.value!==undefined?v.value:JSON.stringify(v)):v;',
-            '      ioH+=\'<div class="io-row"><span class="io-k">\'+esc(k)+\'</span><span class="io-v">\'+esc(val)+\'</span></div>\';',
+            '      ioH+=\'<div class="io-row"><span class="io-k">\'+esc(k)+\'</span><span class="io-v">\'+esc(String(val))+(v.unit?\'<span style="color:var(--dim);margin-left:3px">\'+esc(v.unit)+\'</span>\':"")+\'</span></div>\';',
             '    });',
+            '    // Chip badge: prefer chipModel, fallback hwType',
+            '    var chipLabel=d.chipModel||d.hwType||"esp32";',
+            '    var badgeCls=(chipLabel.indexOf("8266")>=0)?"badge-yellow":(chipLabel.indexOf("S3")>=0||(chipLabel.indexOf("S2")>=0))?"badge-purple":"badge-blue";',
+            '    // Flash bar',
+            '    var fsPct=d.freeSketch>0?Math.round(d.freeSketch/1966080*100):0;',
+            '    var flashBar=d.freeSketch>0?',
+            '      \'<div title="Freier Flash: \'+fmtSize(d.freeSketch||0)+\'" style="margin-top:4px;height:4px;background:var(--bg3);border-radius:2px;overflow:hidden">\'',
+            '      +\'<div style="height:100%;width:\'+fsPct+\'%;background:\'+( fsPct>40?"var(--green)":fsPct>20?"var(--yellow)":"var(--red)")+\'"></div></div>\'',
+            '      :"";',
             '    h+=\'<div class="dc \'+cls+\'">\';',
             '    h+=\'<div class="dc-head"><span class="dc-name">\'+dot+esc(d.name)+\'</span>\';',
-            '    h+=\'<span class="badge badge-\'+((d.hwType||"esp32").indexOf("8266")>=0?"yellow":"blue")+\'">\'+esc(d.hwType||"esp32")+\'</span></div>\';',
-            '    h+=\'<div class="dc-meta">MAC: \'+esc(d.mac)+\' &nbsp;|\';',
-            '    h+=\' IP: <a href="http://\'+esc(d.ip)+\'" target="_blank">\'+esc(d.ip||"?")+\'</a>&nbsp;|\';',
+            '    h+=\'<span class="badge \'+badgeCls+\'">\'+esc(chipLabel)+\'</span></div>\';',
+            '    h+=\'<div class="dc-meta">MAC: \'+esc(d.mac||"")+\' &nbsp;|\';',
+            '    h+=\' IP: <a href="http://\'+esc(d.ip||"")+\'" target="_blank">\'+esc(d.ip||"?")+\'</a>&nbsp;|\';',
             '    h+=\' v\'+esc(d.version||"?")+\'<br>\';',
-            '    h+=\'RSSI: \'+esc(d.rssi||0)+\' dBm &nbsp;| Uptime: \'+esc(d.uptime||0)+\'s\';',
-            '    h+=\' &nbsp;| Heap: \'+fmtSize(d.freeHeap||0)+\' &nbsp;| \'+fmtAge(d.lastSeen)+\'</div>\';',
+            '    h+=\'RSSI: \'+esc(d.rssi||0)+\' dBm &nbsp;| Uptime: \'+fmtUptime(d.uptime||0);\';',
+            '    h+=\'<br>Heap: \'+fmtSize(d.freeHeap||0);',
+            '    if(d.freeSketch>0)h+=\' &nbsp;| Flash frei: \'+fmtSize(d.freeSketch);',
+            '    h+=\' &nbsp;| \'+fmtAge(d.lastSeen)+\'</div>\';',
+            '    if(flashBar)h+=flashBar;',
             '    if(ioH)h+=\'<div class="dc-ios">\'+ioH+\'</div>\';',
-            '    h+=\'<div class="dc-actions">\';',
+            '    // Pinout toggle',
+            '    var pins=getPinout(d);',
+            '    var pinH=\'<div id="pinout-\'+esc(d.mac)+\'" style="display:none;margin-top:8px;border-top:1px solid var(--border);padding-top:8px">\';',
+            '    pinH+=\'<div style="font-size:11px;color:var(--muted);font-weight:700;text-transform:uppercase;margin-bottom:6px">Pinout (\'+esc(chipLabel)+\')</div>\';',
+            '    pinH+=\'<div style="display:grid;grid-template-columns:1fr 1fr;gap:2px 12px;font-size:11px;font-family:var(--mono)">\';',
+            '    pins.forEach(function(pin){',
+            '      pinH+=\'<div style="display:flex;gap:6px;padding:2px 0"><span style="color:var(--accent);min-width:70px">\'+esc(pin.p)+\'</span><span style="color:var(--muted)">\'+esc(pin.f)+\'</span></div>\';',
+            '    });',
+            '    pinH+=\'</div></div>\';',
+            '    h+=pinH;',
+            '    // Actions row 1: OTA',
+            '    h+=\'<div class="dc-actions" style="margin-top:10px;border-top:1px solid var(--border);padding-top:8px">\';',
             '    h+=\'<select class="fw-sel" data-mac="\'+esc(d.mac)+\'">\'+fwOpts+\'</select>\';',
             '    h+=\'<button class="btn btn-sm btn-green" data-mac="\'+esc(d.mac)+\'" onclick="otaPush(this.dataset.mac)">OTA</button>\';',
-            '    h+=\'<button class="btn btn-sm" data-mac="\'+esc(d.mac)+\'" data-name="\'+esc(d.name)+\'" onclick="openRename(this.dataset.mac,this.dataset.name)" style="background:var(--bg3)">&#9998;</button>\';',
+            '    h+=\'</div>\';',
+            '    // Actions row 2: Pinout, Rename, Delete',
+            '    h+=\'<div style="display:flex;gap:6px;margin-top:6px">\';',
+            '    h+=\'<button class="btn btn-sm" style="flex:1;background:var(--bg3)" data-mac="\'+esc(d.mac)+\'" onclick="togglePinout(this.dataset.mac)">&#128204; Pinout</button>\';',
+            '    h+=\'<button class="btn btn-sm" style="background:var(--bg3)" data-mac="\'+esc(d.mac)+\'" data-name="\'+esc(d.name)+\'" onclick="openRename(this.dataset.mac,this.dataset.name)">&#9998; Umbenennen</button>\';',
             '    h+=\'<button class="btn btn-sm btn-red" data-mac="\'+esc(d.mac)+\'" onclick="delDevice(this.dataset.mac)">&#128465;</button>\';',
             '    h+=\'</div></div>\';',
             '  });',
