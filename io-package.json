@@ -1,7 +1,7 @@
 {
   "common": {
     "name": "esp-hub",
-    "version": "0.4.3",
+    "version": "0.4.4",
     "news": {
       "0.1.0": {
         "en": "Initial release: ESP32/ESP8266 device management, heartbeat registration, OTA firmware updates, Web-UI",
@@ -90,6 +90,10 @@
       "0.4.3": {
         "en": "Bugfix: FQBN with partition params now passed as array args to spawn (not string split)",
         "de": "Bugfix: FQBN mit Partition-Parametern wird als Array an spawn uebergeben (nicht String-Split)"
+      },
+      "0.4.4": {
+        "en": "Bugfix: FQBN sanitization stripped = sign, breaking PartitionScheme parameter",
+        "de": "Bugfix: FQBN-Sanitization hat = entfernt, PartitionScheme-Parameter war ungueltig"
       }
     },
     "title": "ESP-Hub",

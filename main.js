@@ -7,7 +7,7 @@ const fs       = require('fs');
 const path     = require('path');
 const { exec } = require('child_process');
 
-const ADAPTER_VERSION = '0.4.3';
+const ADAPTER_VERSION = '0.4.4';
 const NODE_ONLINE_SEC = 120;
 const FIRMWARE_DIR    = '/tmp/iobroker-esphub-fw';
 const SKETCH_DIR      = '/tmp/iobroker-esphub-sketches';
@@ -1078,7 +1078,7 @@ class EspHub extends utils.Adapter {
             let data = {};
             try { data = JSON.parse(body.toString()); } catch (e) { /* ignore */ }
             const sketchName = (data.sketch || '').replace(/[^a-zA-Z0-9_-]/g, '');
-            const fqbn       = (data.fqbn   || '').replace(/[^a-zA-Z0-9:_-]/g, '');
+            const fqbn       = (data.fqbn   || '').replace(/[^a-zA-Z0-9:_.=,-]/g, '');
             if (!sketchName) { json({ ok: false, error: 'sketch erforderlich' }); return; }
             if (!fqbn)       { json({ ok: false, error: 'fqbn erforderlich' }); return; }
             if (!this.arduinoCliReady) { json({ ok: false, error: 'arduino-cli nicht verfügbar' }); return; }
