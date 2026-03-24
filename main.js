@@ -7,7 +7,7 @@ const fs       = require('fs');
 const path     = require('path');
 const { exec } = require('child_process');
 
-const ADAPTER_VERSION = '0.4.4';
+const ADAPTER_VERSION = '0.4.6';
 const NODE_ONLINE_SEC = 120;
 const FIRMWARE_DIR    = '/tmp/iobroker-esphub-fw';
 const SKETCH_DIR      = '/tmp/iobroker-esphub-sketches';
@@ -1441,8 +1441,8 @@ class EspHub extends utils.Adapter {
             '        <option value="esp32:esp32:d1_mini32:PartitionScheme=min_spiffs">Wemos D1 Mini ESP32 (empfohlen)</option>',
             '        <option value="esp32:esp32:d1_mini32">Wemos D1 Mini ESP32 (Standard)</option>',
             '        <option value="esp32:esp32:esp32">ESP32 Dev Module</option>',
-            '        <option value="esp32:esp32:esp32s3:FlashSize=4M,PartitionScheme=min_spiffs,CPUFreq=240,FlashMode=qio,FlashFreq=80">ESP32-S3 WROOM-1 (4MB, empfohlen)</option>',
-            '        <option value="esp32:esp32:esp32s3:FlashSize=4M,PartitionScheme=default,CPUFreq=240,FlashMode=qio,FlashFreq=80">ESP32-S3 WROOM-1 (4MB, Standard)</option>',
+            '        <option value="esp32:esp32:esp32s3:PartitionScheme=min_spiffs">ESP32-S3 WROOM-1 (4MB, empfohlen)</option>',
+            '        <option value="esp32:esp32:esp32s3">ESP32-S3 WROOM-1 (4MB, Standard)</option>',
             '        <option value="esp32:esp32:esp32c3">ESP32-C3 Dev Module</option>',
             '        <option value="esp32:esp32:esp32s2">ESP32-S2 Dev Module</option>',
             '        <option value="esp8266:esp8266:nodemcuv2">NodeMCU 1.0 (ESP8266)</option>',

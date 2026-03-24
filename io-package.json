@@ -1,7 +1,7 @@
 {
   "common": {
     "name": "esp-hub",
-    "version": "0.4.4",
+    "version": "0.4.6",
     "news": {
       "0.1.0": {
         "en": "Initial release: ESP32/ESP8266 device management, heartbeat registration, OTA firmware updates, Web-UI",
@@ -94,6 +94,14 @@
       "0.4.4": {
         "en": "Bugfix: FQBN sanitization stripped = sign, breaking PartitionScheme parameter",
         "de": "Bugfix: FQBN-Sanitization hat = entfernt, PartitionScheme-Parameter war ungueltig"
+      },
+      "0.4.5": {
+        "en": "Bugfix: ESP32-S3 FQBN removed invalid FlashFreq/FlashMode params (not supported by arduino-cli)",
+        "de": "Bugfix: ESP32-S3 FQBN ohne FlashFreq/FlashMode (von arduino-cli nicht unterstuetzt)"
+      },
+      "0.4.6": {
+        "en": "Bugfix: ESP32-S3 FQBN simplified to PartitionScheme=min_spiffs only",
+        "de": "Bugfix: ESP32-S3 FQBN auf PartitionScheme=min_spiffs vereinfacht"
       }
     },
     "title": "ESP-Hub",

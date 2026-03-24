@@ -177,6 +177,12 @@ GNU General Public License v3.0 © MPunktBPunkt — siehe [LICENSE](LICENSE)
 
 ## Changelog
 
+### 0.4.6
+- Bugfix: ESP32-S3 FQBN vereinfacht (nur PartitionScheme=min_spiffs)
+
+### 0.4.3 - 0.4.5
+- Bugfix-Serie: FQBN-Parsing, Sanitization, spawn-Array-Args
+
 ### 0.4.2
 - Fix: OTA-URL nutzt echte Server-IP aus ESP-Verbindung (nicht Config)
 
