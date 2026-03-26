@@ -1,7 +1,7 @@
 {
   "common": {
     "name": "esp-hub",
-    "version": "0.4.7",
+    "version": "0.4.8",
     "news": {
       "0.1.0": {
         "en": "Initial release: ESP32/ESP8266 device management, heartbeat registration, OTA firmware updates, Web-UI",
@@ -106,6 +106,10 @@
       "0.4.7": {
         "en": "New: Board manager (list/uninstall installed cores), copy compile log to clipboard",
         "de": "Neu: Board-Manager (installierte Cores anzeigen und entfernen), Kompilier-Log in Zwischenablage kopieren"
+      },
+      "0.4.8": {
+        "en": "Bugfix: missing function wrapper for ac-install-btn (caused SyntaxError)",
+        "de": "Bugfix: fehlender Funktion-Wrapper fuer ac-install-btn (verursachte SyntaxError)"
       }
     },
     "title": "ESP-Hub",
