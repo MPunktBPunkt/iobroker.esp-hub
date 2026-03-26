@@ -7,7 +7,7 @@ const fs       = require('fs');
 const path     = require('path');
 const { exec } = require('child_process');
 
-const ADAPTER_VERSION = '0.4.6';
+const ADAPTER_VERSION = '0.4.7';
 const NODE_ONLINE_SEC = 120;
 const FIRMWARE_DIR    = '/tmp/iobroker-esphub-fw';
 const SKETCH_DIR      = '/tmp/iobroker-esphub-sketches';
@@ -1004,6 +1004,51 @@ class EspHub extends utils.Adapter {
             return;
         }
 
+        // ── Board core list ──
+        if (url === '/api/board-list') {
+            const cli = this._getArduinoCliCmd();
+            if (!cli) { json({ ok: false, cores: [] }); return; }
+            exec(cli + ' core list 2>&1', { timeout: 30000 }, (err, out) => {
+                const cores = [];
+                (out || '').split('\n').forEach(line => {
+                    const parts = line.trim().split(/\s+/);
+                    if (parts.length >= 2 && parts[0].includes(':')) {
+                        cores.push({ id: parts[0], version: parts[1] });
+                    }
+                });
+                json({ ok: true, cores });
+            });
+            return;
+        }
+
+        // ── Board core uninstall ──
+        if (url === '/api/board-uninstall' && req.method === 'POST') {
+            const body = await readBody();
+            let data = {};
+            try { data = JSON.parse(body.toString()); } catch (e) { /* ignore */ }
+            const platform = (data.platform || '').replace(/[^a-z0-9:]/gi, '');
+            if (!platform) { json({ ok: false, error: 'platform erforderlich' }); return; }
+            const cli = this._getArduinoCliCmd();
+            if (!cli) { json({ ok: false, error: 'arduino-cli nicht verfügbar' }); return; }
+            const addLine = (line, isErr) => { this.compileLog.unshift({ ts: new Date().toISOString(), line, err: isErr || false }); };
+            this.compileLog = [];
+            this.compileRunning = true;
+            addLine('▶ ' + cli + ' core uninstall ' + platform, false);
+            json({ ok: true, message: 'Deinstallation gestartet...' });
+            exec(cli + ' core uninstall ' + platform + ' 2>&1', { timeout: 120000 }, (err, out) => {
+                this.compileRunning = false;
+                (out || '').split('\n').forEach(l => { if (l.trim()) addLine(l.trim(), false); });
+                if (err) {
+                    addLine('❌ Fehler: ' + err.message, true);
+                    this._log('ERROR', 'COMPILE', 'Board-Uninstall fehlgeschlagen: ' + platform);
+                } else {
+                    addLine('✅ Board-Paket entfernt: ' + platform, false);
+                    this._log('INFO', 'COMPILE', 'Board-Paket entfernt: ' + platform);
+                }
+            });
+            return;
+        }
+
         // ── Board core install ──
         if (url === '/api/board-install' && req.method === 'POST') {
             const body = await readBody();
@@ -1356,6 +1401,11 @@ class EspHub extends utils.Adapter {
             '    </div>',
             '  </div>',
             '  <div class="card">',
+            '    <h3>&#128230; Installierte Board-Pakete</h3>',
+            '    <div id="core-list" style="margin-bottom:10px;font-size:13px;color:var(--muted)">Lade...</div>',
+            '    <button class="btn btn-sm btn-blue" id="ac-core-refresh-btn">&#8635; Aktualisieren</button>',
+            '  </div>',
+            '  <div class="card">',
             '    <h3>&#128218; Bibliotheken installieren</h3>',
             '    <div id="lib-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:10px;margin-bottom:14px">',
 
@@ -1452,6 +1502,7 @@ class EspHub extends utils.Adapter {
             '    <div style="display:flex;gap:10px;align-items:center;margin-bottom:12px">',
             '      <button class="btn btn-green" id="cp-btn" disabled>&#9889; Kompilieren</button>',
             '      <button class="btn btn-sm" id="cp-clear-btn">Terminal leeren</button>',
+            '      <button class="btn btn-sm" id="cp-copy-btn">&#128203; Log kopieren</button>',
             '      <span id="cp-status" style="font-size:12px;color:var(--muted)"></span>',
             '    </div>',
             '    <div class="flash-term" id="compile-term">',
@@ -1533,7 +1584,7 @@ class EspHub extends utils.Adapter {
             '    var p=document.getElementById("panel-"+t.dataset.tab);',
             '    if(p)p.classList.add("active");',
             '    if(t.dataset.tab==="flash"){loadPorts();loadFlashFirmwares();}',
-            '    if(t.dataset.tab==="compile"){loadArduinoStatus();loadSketches();loadFlashFirmwares();}',
+            '    if(t.dataset.tab==="compile"){loadArduinoStatus();loadSketches();loadFlashFirmwares();loadCoreList();}',
             '  });',
             '});',
             '',
@@ -2137,7 +2188,48 @@ class EspHub extends utils.Adapter {
             '  });',
             '});',
             '',
-            'document.getElementById("ac-install-btn").addEventListener("click",function(){',
+            'document.getElementById("cp-copy-btn").addEventListener("click",function(){',
+            '  fetch("/api/compile-log").then(function(r){return r.json();}).then(function(d){',
+            '    var txt=d.log.slice().reverse().map(function(e){return e.line;}).join("\\n");',
+            '    navigator.clipboard.writeText(txt).then(function(){',
+            '      var btn=document.getElementById("cp-copy-btn");',
+            '      var orig=btn.textContent;',
+            '      btn.textContent="\\u2705 Kopiert!";',
+            '      setTimeout(function(){btn.textContent=orig;},2000);',
+            '    }).catch(function(){alert("Kopieren fehlgeschlagen — Browser erlaubt keinen Zugriff auf Zwischenablage.");});',
+            '  });',
+            '});',
+            '',
+            'function loadCoreList(){',
+            '  var el=document.getElementById("core-list");',
+            '  if(el)el.textContent="Lade...";',
+            '  fetch("/api/board-list").then(function(r){return r.json();}).then(function(d){',
+            '    if(!el)return;',
+            '    if(!d.cores||!d.cores.length){el.textContent="Keine Board-Pakete installiert.";return;}',
+            '    var h="";',
+            '    d.cores.forEach(function(c){',
+            '      var size=c.id.indexOf("esp32")>=0?"~1-2 GB":"~200 MB";',
+            '      h+=\'<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border2)">\';',
+            '      h+=\'<span style="font-family:var(--mono);flex:1">\'+esc(c.id)+\'</span>\';',
+            '      h+=\'<span style="color:var(--muted);font-size:12px">v\'+esc(c.version)+\'</span>\';',
+            '      h+=\'<button class="btn btn-sm btn-red" data-core="\'+esc(c.id)+\'" onclick="uninstallCore(this.dataset.core)">&#128465; Entfernen</button>\';',
+            '      h+=\'</div>\';',
+            '    });',
+            '    el.innerHTML=h;',
+            '  }).catch(function(){if(el)el.textContent="Fehler beim Laden.";});',
+            '}',
+            '',
+            'function uninstallCore(platform){',
+            '  if(!confirm("Board-Paket "+platform+" wirklich entfernen?\\nDies gibt Speicherplatz frei, aber du kannst es jederzeit neu installieren."))return;',
+            '  var term=document.getElementById("compile-term");',
+            '  if(term)term.innerHTML="";',
+            '  fetch("/api/board-uninstall",{method:"POST",headers:{"Content-Type":"application/json"},',
+            '    body:JSON.stringify({platform:platform})})',
+            '  .then(function(){pollCompileLog(function(){loadCoreList();});});',
+            '}',
+            '',
+            'document.getElementById("ac-core-refresh-btn").addEventListener("click",loadCoreList);',
+            '',
             '  if(!confirm("arduino-cli neu installieren?"))return;',
             '  fetch("/api/arduino-install",{method:"POST"}).then(function(){',
             '    setTimeout(loadArduinoStatus,5000);',
