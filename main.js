@@ -7,7 +7,7 @@ const fs       = require('fs');
 const path     = require('path');
 const { exec } = require('child_process');
 
-const ADAPTER_VERSION = '0.4.8';
+const ADAPTER_VERSION = '0.5.0';
 const NODE_ONLINE_SEC = 120;
 const FIRMWARE_DIR    = '/tmp/iobroker-esphub-fw';
 const SKETCH_DIR      = '/tmp/iobroker-esphub-sketches';
@@ -446,6 +446,12 @@ class EspHub extends utils.Adapter {
                 this._log('ERROR', 'COMPILE', 'Kompilierung fehlgeschlagen: Exit ' + code);
                 cb(new Error('Exit ' + code));
             }
+            // Always clean up build directory (can be 50-200MB!)
+            exec('rm -rf ' + outDir, err => {
+                if (!err) {
+                    this._log('DEBUG', 'COMPILE', 'Build-Verzeichnis bereinigt: ' + outDir);
+                }
+            });
         });
         proc.on('error', e => {
             this.compileRunning = false;
@@ -989,6 +995,86 @@ class EspHub extends utils.Adapter {
             return;
         }
 
+        // ── Cleanup temp dirs ──
+        if (url === '/api/cleanup' && req.method === 'POST') {
+            const body = await readBody();
+            let data = {};
+            try { data = JSON.parse(body.toString()); } catch (e) { /* ignore */ }
+            const what = data.what || 'builds';
+
+            let freed = 0;
+            const results = [];
+            const { execSync } = require('child_process');
+
+            const getSize = (p) => {
+                try { return parseInt(execSync('du -sb ' + p + ' 2>/dev/null || echo 0').toString().split('\t')[0]) || 0; } catch(e) { return 0; }
+            };
+
+            // Always: remove _build directories in SKETCH_DIR
+            try {
+                fs.readdirSync(SKETCH_DIR).forEach(e => {
+                    if (e.endsWith('_build')) {
+                        const p = path.join(SKETCH_DIR, e);
+                        const size = getSize(p);
+                        exec('rm -rf ' + p, () => {});
+                        freed += size;
+                        results.push('Build-Dir: ' + e + ' (' + Math.round(size/1024/1024) + ' MB)');
+                    }
+                });
+            } catch(e) { /* ignore */ }
+
+            // Always: clean arduino-cli sketch cache
+            const arduinoCache = (process.env.HOME || '/home/iobroker') + '/.cache/arduino/sketches';
+            if (fs.existsSync(arduinoCache)) {
+                const cacheSize = getSize(arduinoCache);
+                exec('rm -rf ' + arduinoCache, () => {});
+                freed += cacheSize;
+                results.push('arduino-cli Cache: ' + Math.round(cacheSize/1024/1024) + ' MB');
+            }
+
+            // If 'all': also remove sketch source dirs
+            if (what === 'all') {
+                try {
+                    fs.readdirSync(SKETCH_DIR).forEach(e => {
+                        if (!e.endsWith('_build')) {
+                            const p = path.join(SKETCH_DIR, e);
+                            const size = getSize(p);
+                            exec('rm -rf ' + p, () => {});
+                            freed += size;
+                            results.push('Sketch: ' + e);
+                        }
+                    });
+                } catch(e) { /* ignore */ }
+            }
+
+            this._log('INFO', 'SYSTEM', 'Bereinigung: ' + Math.round(freed/1024/1024) + ' MB freigegeben');
+            json({ ok: true, freed: Math.round(freed/1024/1024), results });
+            return;
+        }
+
+        // ── Disk usage of temp dirs ──
+        if (url === '/api/diskusage') {
+            const { execSync } = require('child_process');
+            const usage = (dir) => {
+                try { return parseInt(execSync('du -sb ' + dir + ' 2>/dev/null || echo 0').toString().split('\t')[0]) || 0; } catch(e) { return 0; }
+            };
+            const sketches = usage(SKETCH_DIR);
+            const firmware = usage(FIRMWARE_DIR);
+            let builds = 0;
+            try {
+                fs.readdirSync(SKETCH_DIR).forEach(e => {
+                    if (e.endsWith('_build')) builds += usage(path.join(SKETCH_DIR, e));
+                });
+            } catch(e) { /* ignore */ }
+            const arduinoCache = (process.env.HOME || '/home/iobroker') + '/.cache/arduino/sketches';
+            const cache = usage(arduinoCache);
+            json({ sketches: Math.round(sketches/1024/1024),
+                   firmware: Math.round(firmware/1024/1024),
+                   builds:   Math.round(builds/1024/1024),
+                   cache:    Math.round(cache/1024/1024) });
+            return;
+        }
+
         // ── Arduino-CLI Status ──
         if (url === '/api/arduino-status') {
             json({ ready: this.arduinoCliReady, cmd: this._getArduinoCliCmd() || '' });
@@ -1406,7 +1492,15 @@ class EspHub extends utils.Adapter {
             '    <button class="btn btn-sm btn-blue" id="ac-core-refresh-btn">&#8635; Aktualisieren</button>',
             '  </div>',
             '  <div class="card">',
-            '    <h3>&#128218; Bibliotheken installieren</h3>',
+            '    <h3>&#128465; Speicher bereinigen</h3>',
+            '    <div id="disk-info" style="font-size:13px;color:var(--muted);margin-bottom:12px">Lade...</div>',
+            '    <div style="display:flex;gap:8px;flex-wrap:wrap">',
+            '      <button class="btn btn-sm btn-blue" id="clean-builds-btn">&#128465; Build-Dateien l&ouml;schen</button>',
+            '      <button class="btn btn-sm btn-red" id="clean-all-btn">&#128465; Alles l&ouml;schen (auch Sketches)</button>',
+            '      <button class="btn btn-sm" id="clean-refresh-btn">&#8635; Aktualisieren</button>',
+            '    </div>',
+            '    <div id="clean-result" style="margin-top:10px;font-size:12px;color:var(--green)"></div>',
+            '  </div>',
             '    <div id="lib-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:10px;margin-bottom:14px">',
 
             // Grundlagen
@@ -1584,7 +1678,7 @@ class EspHub extends utils.Adapter {
             '    var p=document.getElementById("panel-"+t.dataset.tab);',
             '    if(p)p.classList.add("active");',
             '    if(t.dataset.tab==="flash"){loadPorts();loadFlashFirmwares();}',
-            '    if(t.dataset.tab==="compile"){loadArduinoStatus();loadSketches();loadFlashFirmwares();loadCoreList();}',
+            '    if(t.dataset.tab==="compile"){loadArduinoStatus();loadSketches();loadFlashFirmwares();loadCoreList();loadDiskUsage();}',
             '  });',
             '});',
             '',
@@ -2229,6 +2323,39 @@ class EspHub extends utils.Adapter {
             '}',
             '',
             'document.getElementById("ac-core-refresh-btn").addEventListener("click",loadCoreList);',
+            '',
+            '// ── Disk Usage & Cleanup ─────────────────────────',
+            'function loadDiskUsage(){',
+            '  fetch("/api/diskusage").then(function(r){return r.json();}).then(function(d){',
+            '    var el=document.getElementById("disk-info");',
+            '    if(!el)return;',
+            '    el.innerHTML=',
+            '      \'<b>arduino-cli Cache:</b> \'+d.cache+\' MB &nbsp;|&nbsp;\'+',
+            '      \'<b>Sketches:</b> \'+(d.sketches-d.builds)+\' MB &nbsp;|&nbsp;\'+',
+            '      \'<b>Firmware (.bin):</b> \'+d.firmware+\' MB\'+',
+            '      \'<br><span style="color:var(--dim);font-size:11px">Build-Dateien und arduino-cli Cache werden beim Bereinigen entfernt.</span>\';',
+            '  }).catch(function(){});',
+            '}',
+            '',
+            'function doCleanup(what){',
+            '  var res=document.getElementById("clean-result");',
+            '  if(res)res.textContent="Bereinige...";',
+            '  fetch("/api/cleanup",{method:"POST",headers:{"Content-Type":"application/json"},',
+            '    body:JSON.stringify({what:what})})',
+            '  .then(function(r){return r.json();})',
+            '  .then(function(d){',
+            '    if(res)res.textContent="\\u2705 "+d.freed+" MB freigegeben ("+d.results.length+" Eintraege entfernt)";',
+            '    loadDiskUsage();',
+            '    loadSketches();',
+            '  }).catch(function(e){if(res)res.textContent="Fehler: "+e;});',
+            '}',
+            '',
+            'document.getElementById("clean-builds-btn").addEventListener("click",function(){doCleanup("builds");});',
+            'document.getElementById("clean-all-btn").addEventListener("click",function(){',
+            '  if(!confirm("Alle Sketches und Build-Dateien loeschen?"))return;',
+            '  doCleanup("all");',
+            '});',
+            'document.getElementById("clean-refresh-btn").addEventListener("click",loadDiskUsage);',
             '',
             'document.getElementById("ac-install-btn").addEventListener("click",function(){',
             '  if(!confirm("arduino-cli neu installieren?"))return;',

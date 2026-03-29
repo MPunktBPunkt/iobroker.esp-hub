@@ -1,7 +1,7 @@
 {
   "common": {
     "name": "esp-hub",
-    "version": "0.4.8",
+    "version": "0.5.0",
     "news": {
       "0.1.0": {
         "en": "Initial release: ESP32/ESP8266 device management, heartbeat registration, OTA firmware updates, Web-UI",
@@ -110,6 +110,14 @@
       "0.4.8": {
         "en": "Bugfix: missing function wrapper for ac-install-btn (caused SyntaxError)",
         "de": "Bugfix: fehlender Funktion-Wrapper fuer ac-install-btn (verursachte SyntaxError)"
+      },
+      "0.4.9": {
+        "en": "New: auto-cleanup build dirs after compile, disk usage display, manual cleanup button",
+        "de": "Neu: Build-Verzeichnisse automatisch nach Kompilierung loeschen, Speicher-Anzeige, Bereinigung-Button"
+      },
+      "0.5.0": {
+        "en": "Fix: cleanup also removes arduino-cli sketch cache (~/.cache/arduino/sketches)",
+        "de": "Fix: Bereinigung entfernt auch arduino-cli Cache (~/.cache/arduino/sketches)"
       }
     },
     "title": "ESP-Hub",
