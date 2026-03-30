@@ -1,6 +1,6 @@
 # iobroker.esp-hub
 
-![Version](https://img.shields.io/badge/version-0.5.0-blue)
+![Version](https://img.shields.io/badge/version-0.5.1-blue)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 [![Donate](https://img.shields.io/badge/Donate-PayPal-00457C.svg?logo=paypal)](https://www.paypal.com/donate/?business=martin%40bchmnn.de&currency_code=EUR)
 
@@ -196,10 +196,16 @@ GNU General Public License v3.0 © MPunktBPunkt — siehe [LICENSE](LICENSE)
 - Fix: Delete-Button immer sichtbar
 - Firmware v1.4.0: chipModel + freeSketch im Heartbeat
 
+### Firmware v1.7.0
+- Fix: PROGMEM-Strings global (verhindert Compilerfehler)
+- Sketch-Name: esp_hub_base.ino (keine Bindestriche)
+
+### Firmware v1.6.0
+- Neu: SSE Live-Updates statt Seiten-Reload
+- Neu: /api/status JSON-Endpoint
+
 ### Firmware v1.5.0
 - Neu: Web-UI direkt am ESP (Port 80) mit Status + OTA-Tab
-- Status: Chip, IP, RSSI, Uptime, RAM/Flash-Balken
-- OTA: .bin Drag+Drop direkt auf ESP hochladen
 
 ### 0.3.6
 - Fix: Partition min_spiffs fuer ESP32-S3 und D1 Mini (~57% statt 89% Flash-Auslastung)

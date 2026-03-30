@@ -1,7 +1,7 @@
 {
   "common": {
     "name": "esp-hub",
-    "version": "0.5.0",
+    "version": "0.5.1",
     "news": {
       "0.1.0": {
         "en": "Initial release: ESP32/ESP8266 device management, heartbeat registration, OTA firmware updates, Web-UI",
@@ -118,6 +118,10 @@
       "0.5.0": {
         "en": "Fix: cleanup also removes arduino-cli sketch cache (~/.cache/arduino/sketches)",
         "de": "Fix: Bereinigung entfernt auch arduino-cli Cache (~/.cache/arduino/sketches)"
+      },
+      "0.5.1": {
+        "en": "Fix: compile fields in every tab (missing card wrapper); new chip variant manager (delete unused ESP32 chip libs)",
+        "de": "Fix: Kompilier-Felder in jedem Tab (fehlender card-wrapper); Chip-Varianten-Manager zum Loeschen ungenutzter ESP32-Libs"
       }
     },
     "title": "ESP-Hub",

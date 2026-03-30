@@ -7,7 +7,7 @@ const fs       = require('fs');
 const path     = require('path');
 const { exec } = require('child_process');
 
-const ADAPTER_VERSION = '0.5.0';
+const ADAPTER_VERSION = '0.5.1';
 const NODE_ONLINE_SEC = 120;
 const FIRMWARE_DIR    = '/tmp/iobroker-esphub-fw';
 const SKETCH_DIR      = '/tmp/iobroker-esphub-sketches';
@@ -1090,6 +1090,57 @@ class EspHub extends utils.Adapter {
             return;
         }
 
+        // ── Chip variant dirs info & delete ──
+        if (url === '/api/chip-dirs') {
+            const { execSync } = require('child_process');
+            const base = (process.env.HOME || '/home/iobroker') + '/.arduino15/packages/esp32/tools';
+            const dirs = ['esp32-libs','esp32s3-libs','esp32s2-libs','esp32c3-libs',
+                          'esp32c5-libs','esp32c6-libs','esp32h2-libs','esp32p4-libs',
+                          'esp32p4_es-libs','riscv32-esp-elf-gdb','xtensa-esp-elf-gdb','esp-x32','esp-rv32'];
+            const result = {};
+            dirs.forEach(d => {
+                const p = base + '/' + d;
+                try {
+                    const stat = require('fs').existsSync(p);
+                    if (stat) {
+                        const mb = parseInt(execSync('du -sm ' + p + ' 2>/dev/null || echo 0').toString().split('\t')[0]) || 0;
+                        result[d] = { exists: true, mb };
+                    } else {
+                        result[d] = { exists: false, mb: 0 };
+                    }
+                } catch(e) { result[d] = { exists: false, mb: 0 }; }
+            });
+            json({ ok: true, dirs: result });
+            return;
+        }
+
+        if (url === '/api/chip-delete' && req.method === 'POST') {
+            const body = await readBody();
+            let data = {};
+            try { data = JSON.parse(body.toString()); } catch(e) {}
+            const dirs = Array.isArray(data.dirs) ? data.dirs : [];
+            const base = (process.env.HOME || '/home/iobroker') + '/.arduino15/packages/esp32/tools';
+            let freed = 0;
+            const { execSync } = require('child_process');
+            const removed = [];
+            dirs.forEach(d => {
+                // Safety: only allow known dir names
+                if (!/^[a-z0-9_-]+$/i.test(d)) return;
+                const p = base + '/' + d;
+                if (require('fs').existsSync(p)) {
+                    try {
+                        const mb = parseInt(execSync('du -sm ' + p + ' 2>/dev/null || echo 0').toString().split('\t')[0]) || 0;
+                        execSync('rm -rf ' + p);
+                        freed += mb;
+                        removed.push(d + ' (' + mb + ' MB)');
+                        this._log('INFO', 'SYSTEM', 'Chip-Libs gelöscht: ' + d + ' ' + mb + ' MB');
+                    } catch(e) { this._log('WARN','SYSTEM','Löschen fehlgeschlagen: '+d); }
+                }
+            });
+            json({ ok: true, freed, removed });
+            return;
+        }
+
         // ── Board core list ──
         if (url === '/api/board-list') {
             const cli = this._getArduinoCliCmd();
@@ -1355,6 +1406,9 @@ class EspHub extends utils.Adapter {
             '.esptool-badge{display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border-radius:6px;font-size:12px;margin-bottom:14px}',
             '.esptool-ok{background:rgba(63,185,80,.1);border:1px solid rgba(63,185,80,.3);color:var(--green)}',
             '.esptool-err{background:rgba(248,81,73,.1);border:1px solid rgba(248,81,73,.3);color:var(--red)}',
+            '.chip-item{background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:8px 10px;display:flex;justify-content:space-between;align-items:center}',
+            '.chip-item label{display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px}',
+            '.chip-size{font-size:11px;color:var(--muted);font-family:var(--mono);white-space:nowrap}',
             '.lib-group{background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:10px 12px}',
             '.lib-group-title{font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px}',
             '.lib-item{display:flex;align-items:center;gap:6px;padding:3px 0;cursor:pointer;font-size:13px;user-select:none}',
@@ -1492,6 +1546,30 @@ class EspHub extends utils.Adapter {
             '    <button class="btn btn-sm btn-blue" id="ac-core-refresh-btn">&#8635; Aktualisieren</button>',
             '  </div>',
             '  <div class="card">',
+            '    <h3>&#127760; ESP32 Chip-Varianten verwalten</h3>',
+            '    <div style="font-size:12px;color:var(--muted);margin-bottom:12px">',
+            '      W&auml;hle nur die Chips aus die du verwendest. Nicht ben&ouml;tigte Varianten sparen mehrere GB Speicher.',
+            '    </div>',
+            '    <div id="chip-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:8px;margin-bottom:12px">',
+            '      <div class="chip-item" data-dir="esp32-libs"><label><input type="checkbox" id="chip-esp32"> <b>ESP32</b> <span style="color:var(--muted);font-size:11px">(D1 Mini, Dev Module)</span></label><div class="chip-size" id="sz-esp32-libs">?</div></div>',
+            '      <div class="chip-item" data-dir="esp32s3-libs"><label><input type="checkbox" id="chip-esp32s3"> <b>ESP32-S3</b> <span style="color:var(--muted);font-size:11px">(WROOM-1, DevKit)</span></label><div class="chip-size" id="sz-esp32s3-libs">?</div></div>',
+            '      <div class="chip-item" data-dir="esp32s2-libs"><label><input type="checkbox" id="chip-esp32s2"> <b>ESP32-S2</b> <span style="color:var(--muted);font-size:11px"></span></label><div class="chip-size" id="sz-esp32s2-libs">?</div></div>',
+            '      <div class="chip-item" data-dir="esp32c3-libs"><label><input type="checkbox" id="chip-esp32c3"> <b>ESP32-C3</b> <span style="color:var(--muted);font-size:11px"></span></label><div class="chip-size" id="sz-esp32c3-libs">?</div></div>',
+            '      <div class="chip-item" data-dir="esp32c5-libs"><label><input type="checkbox" id="chip-esp32c5"> <b>ESP32-C5</b> <span style="color:var(--muted);font-size:11px">(RISC-V)</span></label><div class="chip-size" id="sz-esp32c5-libs">?</div></div>',
+            '      <div class="chip-item" data-dir="esp32c6-libs"><label><input type="checkbox" id="chip-esp32c6"> <b>ESP32-C6</b> <span style="color:var(--muted);font-size:11px">(RISC-V)</span></label><div class="chip-size" id="sz-esp32c6-libs">?</div></div>',
+            '      <div class="chip-item" data-dir="esp32h2-libs"><label><input type="checkbox" id="chip-esp32h2"> <b>ESP32-H2</b> <span style="color:var(--muted);font-size:11px">(RISC-V)</span></label><div class="chip-size" id="sz-esp32h2-libs">?</div></div>',
+            '      <div class="chip-item" data-dir="esp32p4-libs"><label><input type="checkbox" id="chip-esp32p4"> <b>ESP32-P4</b> <span style="color:var(--muted);font-size:11px"></span></label><div class="chip-size" id="sz-esp32p4-libs">?</div></div>',
+            '      <div class="chip-item" data-dir="riscv32-esp-elf-gdb"><label><input type="checkbox" id="chip-rv-gdb"> <b>RISC-V Debugger</b> <span style="color:var(--muted);font-size:11px">(GDB)</span></label><div class="chip-size" id="sz-riscv32-esp-elf-gdb">?</div></div>',
+            '      <div class="chip-item" data-dir="xtensa-esp-elf-gdb"><label><input type="checkbox" id="chip-xt-gdb"> <b>Xtensa Debugger</b> <span style="color:var(--muted);font-size:11px">(GDB)</span></label><div class="chip-size" id="sz-xtensa-esp-elf-gdb">?</div></div>',
+            '    </div>',
+            '    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">',
+            '      <button class="btn btn-sm btn-red" id="chip-delete-btn">&#128465; Ausgew&auml;hlte l&ouml;schen</button>',
+            '      <button class="btn btn-sm btn-blue" id="chip-refresh-btn">&#8635; Gr&ouml;&szlig;en laden</button>',
+            '      <span id="chip-result" style="font-size:12px;color:var(--green)"></span>',
+            '    </div>',
+            '    <div style="margin-top:8px;font-size:11px;color:var(--dim)">Pfad: ~/.arduino15/packages/esp32/tools/</div>',
+            '  </div>',
+            '  <div class="card">',
             '    <h3>&#128465; Speicher bereinigen</h3>',
             '    <div id="disk-info" style="font-size:13px;color:var(--muted);margin-bottom:12px">Lade...</div>',
             '    <div style="display:flex;gap:8px;flex-wrap:wrap">',
@@ -1501,6 +1579,8 @@ class EspHub extends utils.Adapter {
             '    </div>',
             '    <div id="clean-result" style="margin-top:10px;font-size:12px;color:var(--green)"></div>',
             '  </div>',
+            '  <div class="card">',
+            '    <h3>&#128218; Bibliotheken installieren</h3>',
             '    <div id="lib-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:10px;margin-bottom:14px">',
 
             // Grundlagen
@@ -1678,7 +1758,7 @@ class EspHub extends utils.Adapter {
             '    var p=document.getElementById("panel-"+t.dataset.tab);',
             '    if(p)p.classList.add("active");',
             '    if(t.dataset.tab==="flash"){loadPorts();loadFlashFirmwares();}',
-            '    if(t.dataset.tab==="compile"){loadArduinoStatus();loadSketches();loadFlashFirmwares();loadCoreList();loadDiskUsage();}',
+            '    if(t.dataset.tab==="compile"){loadArduinoStatus();loadSketches();loadFlashFirmwares();loadCoreList();loadDiskUsage();loadChipDirs();}',
             '  });',
             '});',
             '',
@@ -2356,6 +2436,68 @@ class EspHub extends utils.Adapter {
             '  doCleanup("all");',
             '});',
             'document.getElementById("clean-refresh-btn").addEventListener("click",loadDiskUsage);',
+            '',
+            '// ── Chip Variant Manager ──────────────────────────',
+            'function loadChipDirs(){',
+            '  fetch("/api/chip-dirs").then(function(r){return r.json();}).then(function(d){',
+            '    if(!d.dirs)return;',
+            '    Object.keys(d.dirs).forEach(function(name){',
+            '      var info=d.dirs[name];',
+            '      var sz=document.getElementById("sz-"+name);',
+            '      if(sz)sz.textContent=info.exists?info.mb+" MB":"nicht vorhanden";',
+            '      // Map dir names to checkbox ids',
+            '      var idMap={',
+            '        "esp32-libs":"chip-esp32",',
+            '        "esp32s3-libs":"chip-esp32s3",',
+            '        "esp32s2-libs":"chip-esp32s2",',
+            '        "esp32c3-libs":"chip-esp32c3",',
+            '        "esp32c5-libs":"chip-esp32c5",',
+            '        "esp32c6-libs":"chip-esp32c6",',
+            '        "esp32h2-libs":"chip-esp32h2",',
+            '        "esp32p4-libs":"chip-esp32p4",',
+            '        "riscv32-esp-elf-gdb":"chip-rv-gdb",',
+            '        "xtensa-esp-elf-gdb":"chip-xt-gdb"',
+            '      };',
+            '      var cbId=idMap[name];',
+            '      if(cbId){',
+            '        var cb=document.getElementById(cbId);',
+            '        if(cb){cb.checked=false;cb.disabled=!info.exists;}',
+            '      }',
+            '    });',
+            '  }).catch(function(){});',
+            '}',
+            '',
+            'document.getElementById("chip-refresh-btn").addEventListener("click",loadChipDirs);',
+            'document.getElementById("chip-delete-btn").addEventListener("click",function(){',
+            '  var dirMap={',
+            '    "chip-esp32":"esp32-libs",',
+            '    "chip-esp32s3":"esp32s3-libs",',
+            '    "chip-esp32s2":"esp32s2-libs",',
+            '    "chip-esp32c3":"esp32c3-libs",',
+            '    "chip-esp32c5":"esp32c5-libs",',
+            '    "chip-esp32c6":"esp32c6-libs",',
+            '    "chip-esp32h2":"esp32h2-libs",',
+            '    "chip-esp32p4":"esp32p4-libs",',
+            '    "chip-rv-gdb":"riscv32-esp-elf-gdb",',
+            '    "chip-xt-gdb":"xtensa-esp-elf-gdb"',
+            '  };',
+            '  var toDelete=[];',
+            '  Object.keys(dirMap).forEach(function(cbId){',
+            '    var cb=document.getElementById(cbId);',
+            '    if(cb&&cb.checked)toDelete.push(dirMap[cbId]);',
+            '  });',
+            '  if(!toDelete.length){alert("Keine Chip-Varianten ausgewaehlt.");return;}',
+            '  if(!confirm("Diese "+toDelete.length+" Chip-Variante(n) wirklich loeschen?\\n"+toDelete.join("\\n")+"\\n\\nDies ist nicht rueckgaengig zu machen!"))return;',
+            '  var res=document.getElementById("chip-result");',
+            '  if(res)res.textContent="Loeschen...";',
+            '  fetch("/api/chip-delete",{method:"POST",headers:{"Content-Type":"application/json"},',
+            '    body:JSON.stringify({dirs:toDelete})})',
+            '  .then(function(r){return r.json();})',
+            '  .then(function(d){',
+            '    if(res)res.textContent="\\u2705 "+d.freed+" MB freigegeben ("+d.removed.length+" Ordner)";',
+            '    loadChipDirs();loadDiskUsage();',
+            '  }).catch(function(e){if(res)res.textContent="Fehler: "+e;});',
+            '});',
             '',
             'document.getElementById("ac-install-btn").addEventListener("click",function(){',
             '  if(!confirm("arduino-cli neu installieren?"))return;',
