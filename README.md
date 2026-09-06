@@ -1,6 +1,6 @@
 # iobroker.esp-hub
 
-![Version](https://img.shields.io/badge/version-0.5.3-blue)
+![Version](https://img.shields.io/badge/version-0.5.4-blue)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 [![Donate](https://img.shields.io/badge/Donate-PayPal-00457C.svg?logo=paypal)](https://www.paypal.com/donate/?business=martin%40bchmnn.de&currency_code=EUR)
 
@@ -191,6 +191,9 @@ GNU General Public License v3.0 © MPunktBPunkt — siehe [LICENSE](LICENSE)
 ---
 
 ## Changelog
+
+### 0.5.4
+- Gebündelte Firmwares: communicator 1.5.0, io-control 1.3.3, network 1.6.6, webradio 2.3.0
 
 ### 0.5.3
 - Sicherheit: Flash/OTA nur bei passender Chip-Familie (kein S3-Bin auf D1 Mini)

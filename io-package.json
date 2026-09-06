@@ -1,8 +1,12 @@
 {
   "common": {
     "name": "esp-hub",
-    "version": "0.5.3",
+    "version": "0.5.4",
     "news": {
+      "0.5.4": {
+        "en": "Refresh bundled firmwares: communicator 1.5.0, io-control 1.3.3, network 1.6.6, webradio 2.3.0 (esp32/esp32s3)",
+        "de": "Gebuendelte Firmwares aktualisiert: communicator 1.5.0, io-control 1.3.3, network 1.6.6, webradio 2.3.0 (esp32/esp32s3)"
+      },
       "0.5.3": {
         "en": "Safety: refuse flashing firmware onto wrong chip family (e.g. esp32s3.bin on D1 Mini); unified firmware naming name.version.family.bin",
         "de": "Sicherheit: Flash/OTA nur bei passender Chip-Familie (z.B. kein esp32s3.bin auf D1 Mini); einheitliche Firmware-Namen name.version.family.bin"
@@ -78,10 +82,6 @@
       "0.3.2": {
         "en": "Bugfix: SyntaxError from invalid unicode escape in browser JS",
         "de": "Bugfix: SyntaxError durch ungültiges Unicode-Escape im Browser-JS"
-      },
-      "0.3.1": {
-        "en": "New: Categorized library manager with 20+ libraries (Display, Sensors, LED, Energy...)",
-        "de": "Neu: Kategorisierter Bibliotheks-Manager mit 20+ Bibliotheken (Display, Sensoren, LED, Energie...)"
       }
     },
     "title": "ESP-Hub",
