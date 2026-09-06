@@ -104,6 +104,7 @@ class EspHub extends utils.Adapter {
         this.flashLog         = [];
         this.flashRunning     = false;
         this.esptoolReady     = false;
+        this.esptoolCmd       = '';   // resolved command, e.g. "/path/to/esptool"
         this.compileLog       = [];
         this.compileRunning   = false;
         this.arduinoCliReady  = false;
@@ -555,54 +556,170 @@ class EspHub extends utils.Adapter {
         });
     }
 
-    // ─── esptool.py Auto-Install ─────────────────────────────────────────
+    // ─── esptool Auto-Install / Resolve ──────────────────────────────────
 
-    _installEsptool() {
+    _esptoolToolsDir() {
+        return (process.env.HOME || '/home/iobroker') + '/.esphub-tools';
+    }
+
+    /** Candidate binaries/scripts, preferred first. */
+    _esptoolCandidates() {
+        const home = process.env.HOME || '/home/iobroker';
+        const list = [];
+        const venv = this._esptoolToolsDir() + '/venv';
+        list.push(venv + '/bin/esptool');
+        list.push(venv + '/bin/esptool.py');
+        list.push(venv + '/bin/python3 -m esptool');
+
+        // Bundled with Arduino ESP32 core (already on disk after board install)
+        try {
+            const base = home + '/.arduino15/packages/esp32/tools/esptool_py';
+            if (fs.existsSync(base)) {
+                fs.readdirSync(base).sort().reverse().forEach(ver => {
+                    const dir = path.join(base, ver);
+                    ['esptool', 'esptool.py'].forEach(name => {
+                        const p = path.join(dir, name);
+                        if (fs.existsSync(p)) list.push(p);
+                    });
+                });
+            }
+        } catch (e) { /* ignore */ }
+
+        list.push('esptool');
+        list.push('esptool.py');
+        list.push(home + '/.local/bin/esptool');
+        list.push(home + '/.local/bin/esptool.py');
+        list.push('python3 -m esptool');
+        return list;
+    }
+
+    _probeEsptoolCmd(cmd, cb) {
+        if (!cmd) { cb(null); return; }
+        exec(cmd + ' version 2>&1', { timeout: 8000 }, (err, out) => {
+            const text = String(out || '');
+            if (!err && /esptool/i.test(text)) {
+                cb(cmd, (text.split('\n')[0] || '').trim());
+            } else {
+                cb(null);
+            }
+        });
+    }
+
+    _resolveEsptool(cb) {
+        const cands = this._esptoolCandidates();
+        const tryNext = (i) => {
+            if (i >= cands.length) { cb(null); return; }
+            this._probeEsptoolCmd(cands[i], (cmd, ver) => {
+                if (cmd) cb(cmd, ver);
+                else tryNext(i + 1);
+            });
+        };
+        tryNext(0);
+    }
+
+    _setEsptoolReady(cmd, ver, method) {
+        this.esptoolCmd = cmd;
+        this.esptoolReady = true;
+        this._log('INFO', 'FLASH', 'esptool bereit (' + method + '): ' + (ver || cmd));
+    }
+
+    _installEsptoolVenv(cb) {
+        const tools = this._esptoolToolsDir();
+        const venv = tools + '/venv';
+        const py = venv + '/bin/python3';
         const self = this;
+        try { if (!fs.existsSync(tools)) fs.mkdirSync(tools, { recursive: true }); } catch (e) { /* ignore */ }
 
-        const verify = (method) => {
-            exec('esptool.py version 2>/dev/null || python3 -m esptool version 2>/dev/null', (e, out) => {
-                if (!e && out && out.toLowerCase().includes('esptool')) {
-                    self.esptoolReady = true;
-                    self._log('INFO', 'FLASH', 'esptool bereit (' + method + '): ' + out.split('\n')[0].trim());
-                } else {
-                    self._log('ERROR', 'FLASH',
-                        'esptool Installation fehlgeschlagen. Bitte im Terminal: pip3 install esptool');
-                }
+        const afterPip = () => {
+            const cmd = fs.existsSync(venv + '/bin/esptool') ? (venv + '/bin/esptool')
+                      : (fs.existsSync(venv + '/bin/esptool.py') ? (venv + '/bin/esptool.py')
+                      : (py + ' -m esptool'));
+            self._probeEsptoolCmd(cmd, (ok, ver) => {
+                if (ok) { self._setEsptoolReady(ok, ver, 'venv'); cb(null, ok); }
+                else cb(new Error('venv esptool nicht lauffähig'));
             });
         };
 
-        // Step 1: Already available?
-        exec('esptool.py version 2>/dev/null || python3 -m esptool version 2>/dev/null', (err, stdout) => {
-            if (!err && stdout && stdout.toLowerCase().includes('esptool')) {
-                self.esptoolReady = true;
-                self._log('INFO', 'FLASH', 'esptool bereits vorhanden: ' + stdout.split('\n')[0].trim());
+        if (fs.existsSync(py)) {
+            self._log('INFO', 'FLASH', 'esptool venv vorhanden — pip install/upgrade...');
+            exec(py + ' -m pip install -U esptool 2>&1', { timeout: 180000 }, (err, out) => {
+                if (err) self._log('WARN', 'FLASH', 'pip im venv: ' + String(out || err.message).split('\n')[0]);
+                afterPip();
+            });
+            return;
+        }
+
+        self._log('INFO', 'FLASH', 'Lege esptool venv an unter ' + venv);
+        exec('python3 -m venv ' + venv + ' 2>&1', { timeout: 60000 }, (err1, out1) => {
+            if (err1 || !fs.existsSync(py)) {
+                cb(new Error('venv fehlgeschlagen: ' + String(out1 || err1 && err1.message || '').split('\n')[0]));
+                return;
+            }
+            exec(py + ' -m pip install -U pip esptool 2>&1', { timeout: 180000 }, (err2, out2) => {
+                if (err2) {
+                    cb(new Error('pip install esptool fehlgeschlagen: ' + String(out2 || err2.message).split('\n')[0]));
+                    return;
+                }
+                afterPip();
+            });
+        });
+    }
+
+    _installEsptool(cb) {
+        const self = this;
+        const done = (err) => { if (typeof cb === 'function') cb(err); };
+
+        // 1) Already resolvable (system / arduino-bundle / previous venv)?
+        this._resolveEsptool((cmd, ver) => {
+            if (cmd) {
+                self._setEsptoolReady(cmd, ver, 'gefunden');
+                done(null);
                 return;
             }
 
-            self._log('INFO', 'FLASH', 'esptool nicht gefunden — versuche Installation...');
+            self._log('INFO', 'FLASH', 'esptool nicht gefunden — installiere automatisch (venv)...');
 
-            // Step 2: pip3 install esptool (ohne Flags — funktioniert auf pip22/Ubuntu)
-            exec('pip3 install esptool 2>&1', { timeout: 120000 }, (err2, out2) => {
-                if (!err2) { verify('pip3'); return; }
-                self._log('WARN', 'FLASH', 'pip3 fehlgeschlagen: ' + (out2 || '').split('\n')[0].trim());
+            // 2) Dedicated user venv (no root) — preferred install path
+            self._installEsptoolVenv((errV) => {
+                if (!errV) { done(null); return; }
+                self._log('WARN', 'FLASH', String(errV.message || errV));
 
-                // Step 3: pip3 --user (kein sudo, Home-Verzeichnis)
-                exec('pip3 install esptool --user 2>&1', { timeout: 120000 }, (err3, out3) => {
-                    if (!err3) { verify('pip3 --user'); return; }
-                    self._log('WARN', 'FLASH', 'pip3 --user fehlgeschlagen: ' + (out3 || '').split('\n')[0].trim());
+                // 3) Fallback pip variants
+                const tryPip = (args, label, next) => {
+                    exec('pip3 install ' + args + ' 2>&1', { timeout: 120000 }, (err, out) => {
+                        if (!err) {
+                            self._resolveEsptool((c, v) => {
+                                if (c) { self._setEsptoolReady(c, v, label); done(null); }
+                                else next();
+                            });
+                            return;
+                        }
+                        self._log('WARN', 'FLASH', label + ' fehlgeschlagen: ' + String(out || '').split('\n')[0].trim());
+                        next();
+                    });
+                };
 
-                    // Step 4: pip3 --break-system-packages (pip23+ / neuere Systeme)
-                    exec('pip3 install esptool --break-system-packages 2>&1', { timeout: 120000 }, (err4, out4) => {
-                        if (!err4) { verify('pip3 --bsp'); return; }
-                        self._log('WARN', 'FLASH', 'pip3 --bsp fehlgeschlagen: ' + (out4 || '').split('\n')[0].trim());
-
-                        // Step 5: sudo -n apt (letzter Versuch)
-                        exec('sudo -n apt-get install -y python3-esptool 2>&1', { timeout: 120000 }, (err5, out5) => {
-                            if (!err5) { verify('apt'); return; }
+                tryPip('esptool --user', 'pip3 --user', () => {
+                    tryPip('esptool --break-system-packages', 'pip3 --bsp', () => {
+                        exec('sudo -n apt-get install -y python3-esptool 2>&1', { timeout: 120000 }, (errA) => {
+                            if (!errA) {
+                                self._resolveEsptool((c, v) => {
+                                    if (c) { self._setEsptoolReady(c, v, 'apt'); done(null); }
+                                    else {
+                                        self.esptoolReady = false;
+                                        self.esptoolCmd = '';
+                                        self._log('ERROR', 'FLASH', 'esptool nach apt nicht gefunden');
+                                        done(new Error('esptool nicht verfügbar'));
+                                    }
+                                });
+                                return;
+                            }
+                            self.esptoolReady = false;
+                            self.esptoolCmd = '';
                             self._log('ERROR', 'FLASH',
-                                'Automatische Installation fehlgeschlagen. ' +
-                                'Bitte im Terminal als root: pip3 install esptool');
+                                'Automatische esptool-Installation fehlgeschlagen. ' +
+                                'Board-Paket installieren oder: python3 -m venv ~/.esphub-tools/venv && ~/.esphub-tools/venv/bin/pip install esptool');
+                            done(new Error('esptool Installation fehlgeschlagen'));
                         });
                     });
                 });
@@ -611,12 +728,31 @@ class EspHub extends utils.Adapter {
     }
 
     _getEsptoolCmd() {
-        // Returns the correct esptool command for this system
+        if (this.esptoolCmd) return this.esptoolCmd;
+        // sync fallback for rare race before async resolve finishes
+        const home = process.env.HOME || '/home/iobroker';
+        const syncCands = [
+            this._esptoolToolsDir() + '/venv/bin/esptool',
+            this._esptoolToolsDir() + '/venv/bin/esptool.py',
+            home + '/.local/bin/esptool',
+            'esptool',
+            'esptool.py'
+        ];
+        for (let i = 0; i < syncCands.length; i++) {
+            const c = syncCands[i];
+            try {
+                if (c.indexOf('/') === 0 && !fs.existsSync(c)) continue;
+                require('child_process').execSync(c + ' version', { timeout: 3000, stdio: ['ignore', 'pipe', 'pipe'] });
+                this.esptoolCmd = c;
+                return c;
+            } catch (e) { /* try next */ }
+        }
         try {
-            require('child_process').execSync('esptool.py version 2>/dev/null', { timeout: 3000 });
-            return 'esptool.py';
+            require('child_process').execSync('python3 -m esptool version', { timeout: 3000, stdio: ['ignore', 'pipe', 'pipe'] });
+            this.esptoolCmd = 'python3 -m esptool';
+            return this.esptoolCmd;
         } catch (e) {
-            return 'python3 -m esptool';
+            return '';
         }
     }
 
@@ -1056,7 +1192,29 @@ class EspHub extends utils.Adapter {
 
         // ── USB Ports ──
         if (url === '/api/ports') {
-            this._getUsbPorts(ports => json({ ports, esptoolReady: this.esptoolReady }));
+            this._getUsbPorts(ports => json({
+                ports,
+                esptoolReady: this.esptoolReady,
+                esptoolCmd: this.esptoolCmd || ''
+            }));
+            return;
+        }
+
+        // ── esptool install / re-detect ──
+        if (url === '/api/esptool-install' && req.method === 'POST') {
+            json({ ok: true, message: 'esptool wird gesucht/installiert...' });
+            this._installEsptool(err => {
+                if (err) this._log('WARN', 'FLASH', 'esptool-install: ' + err.message);
+            });
+            return;
+        }
+
+        // ── esptool status ──
+        if (url === '/api/esptool-status') {
+            json({
+                ready: this.esptoolReady,
+                cmd: this.esptoolCmd || this._getEsptoolCmd() || ''
+            });
             return;
         }
 
@@ -1632,12 +1790,12 @@ class EspHub extends utils.Adapter {
             // ── Flash Panel ──
             '<div class="panel" id="panel-flash">',
             '  <div class="card">',
-            '    <h3>&#128268; USB-Programmierung (esptool.py)</h3>',
-            '    <div id="esptool-status" class="esptool-badge esptool-err">&#10007; esptool.py wird gepr&uuml;ft...</div>',
+            '    <h3>&#128268; USB-Programmierung (esptool)</h3>',
+            '    <div id="esptool-status" class="esptool-badge esptool-err">&#10007; esptool wird gepr&uuml;ft...</div>',
             '    <div id="esptool-hint" style="display:none;background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:10px 14px;margin-bottom:12px;font-size:12px;color:var(--muted)">',
-            '      Im Terminal als root ausf&uuml;hren:<br>',
-            '      <code style="color:var(--accent)">pip3 install esptool</code>',
-            '      &nbsp;&mdash; dann Adapter neu starten.',
+            '      <div style="margin-bottom:8px">esptool wird vom Adapter automatisch mitgeliefert (Arduino-Bundle oder User-venv). Falls es fehlt:</div>',
+            '      <button class="btn btn-sm btn-blue" id="esptool-install-btn">&#128229; esptool jetzt installieren</button>',
+            '      <span id="esptool-install-msg" style="margin-left:8px"></span>',
             '    </div>',
             '    <div class="flash-row">',
             '      <label>USB-Port</label>',
@@ -2315,12 +2473,12 @@ class EspHub extends utils.Adapter {
             '    if(badge){',
             '      if(d.esptoolReady){',
             '        badge.className="esptool-badge esptool-ok";',
-            '        badge.innerHTML="&#10003; esptool.py verf\\u00fcgbar";',
+            '        badge.innerHTML="&#10003; esptool verf\\u00fcgbar"+(d.esptoolCmd?(" <span style=\\"color:var(--muted);font-size:11px\\">("+esc(d.esptoolCmd)+")</span>"):"");',
             '        var hint=document.getElementById("esptool-hint");',
             '        if(hint)hint.style.display="none";',
             '      } else {',
             '        badge.className="esptool-badge esptool-err";',
-            '        badge.innerHTML="&#10007; esptool.py nicht verf\\u00fcgbar";',
+            '        badge.innerHTML="&#10007; esptool nicht verf\\u00fcgbar";',
             '        var hint=document.getElementById("esptool-hint");',
             '        if(hint)hint.style.display="block";',
             '      }',
@@ -2329,6 +2487,32 @@ class EspHub extends utils.Adapter {
             '      if(db)db.disabled=!d.esptoolReady;',
             '    }',
             '  }).catch(function(){});',
+            '}',
+            '',
+            'function installEsptool(){',
+            '  var msg=document.getElementById("esptool-install-msg");',
+            '  var btn=document.getElementById("esptool-install-btn");',
+            '  if(btn)btn.disabled=true;',
+            '  if(msg)msg.textContent="Installiere...";',
+            '  fetch("/api/esptool-install",{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"}).then(function(){',
+            '    var n=0;',
+            '    var t=setInterval(function(){',
+            '      n++;',
+            '      fetch("/api/esptool-status").then(function(r){return r.json();}).then(function(d){',
+            '        if(d.ready){',
+            '          clearInterval(t);',
+            '          if(msg)msg.textContent="OK";',
+            '          if(btn)btn.disabled=false;',
+            '          loadPorts();',
+            '        } else if(n>36){',
+            '          clearInterval(t);',
+            '          if(msg)msg.textContent="Timeout — Logs prüfen";',
+            '          if(btn)btn.disabled=false;',
+            '          loadPorts();',
+            '        } else if(msg){ msg.textContent="Installiere... ("+n*5+"s)"; }',
+            '      }).catch(function(){});',
+            '    },5000);',
+            '  }).catch(function(e){ if(msg)msg.textContent=String(e); if(btn)btn.disabled=false; });',
             '}',
             '',
             'function loadFlashFirmwares(){',
@@ -2414,6 +2598,8 @@ class EspHub extends utils.Adapter {
             '}',
             '',
             'document.getElementById("fl-refresh-btn").addEventListener("click",function(){loadPorts();loadFlashFirmwares();});',
+            'var espInstBtn=document.getElementById("esptool-install-btn");',
+            'if(espInstBtn)espInstBtn.addEventListener("click",installEsptool);',
             'document.getElementById("fl-detect-btn").addEventListener("click",function(){',
             '  var port=document.getElementById("fl-port").value;',
             '  if(!port){alert("Bitte zuerst einen USB-Port ausw\\u00e4hlen!");return;}',
