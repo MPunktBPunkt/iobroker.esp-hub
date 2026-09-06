@@ -7,10 +7,14 @@ const fs       = require('fs');
 const path     = require('path');
 const { exec } = require('child_process');
 
-const ADAPTER_VERSION = '0.5.1';
+const ADAPTER_VERSION = '0.5.2';
 const NODE_ONLINE_SEC = 120;
 const FIRMWARE_DIR    = '/tmp/iobroker-esphub-fw';
 const SKETCH_DIR      = '/tmp/iobroker-esphub-sketches';
+const ESP_BOARD_URLS  = [
+    'https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json',
+    'https://arduino.esp8266.com/stable/package_esp8266com_index.json'
+];
 
 // ─── Helper ────────────────────────────────────────────────────────────────
 
@@ -315,6 +319,9 @@ class EspHub extends utils.Adapter {
         if (cmd) {
             self.arduinoCliReady = true;
             self._log('INFO', 'COMPILE', 'arduino-cli bereits vorhanden: ' + cmd);
+            // Always ensure Espressif/ESP8266 board URLs — missing on fresh hosts
+            // when the binary was preinstalled without config init.
+            self._ensureArduinoConfig();
             return;
         }
         self._log('INFO', 'COMPILE', 'arduino-cli nicht gefunden — installiere...');
@@ -331,6 +338,7 @@ class EspHub extends utils.Adapter {
                     if (!err2 && self._getArduinoCliCmd()) {
                         self.arduinoCliReady = true;
                         self._log('INFO', 'COMPILE', 'arduino-cli via apt installiert.');
+                        self._ensureArduinoConfig();
                     } else {
                         self._log('ERROR', 'COMPILE', 'arduino-cli Installation fehlgeschlagen.');
                     }
@@ -340,25 +348,38 @@ class EspHub extends utils.Adapter {
             if (self._getArduinoCliCmd()) {
                 self.arduinoCliReady = true;
                 self._log('INFO', 'COMPILE', 'arduino-cli installiert.');
-                self._initArduinoConfig();
+                self._ensureArduinoConfig();
             } else {
                 self._log('ERROR', 'COMPILE', 'arduino-cli Binary nach Download nicht gefunden.');
             }
         });
     }
 
-    _initArduinoConfig() {
+    /**
+     * Ensure arduino-cli has ESP32/ESP8266 package indexes, then refresh the core index.
+     * Safe to call repeatedly; duplicate URL adds are ignored.
+     * @param {function(Error|null)=} cb
+     */
+    _ensureArduinoConfig(cb) {
         const cli = this._getArduinoCliCmd();
-        if (!cli) return;
-        // Init config + add ESP board URLs
-        const initCmd = cli + ' config init --overwrite 2>&1 && ' +
-            cli + ' config add board_manager.additional_urls ' +
-            'https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json ' +
-            'https://arduino.esp8266.com/stable/package_esp8266com_index.json 2>&1 && ' +
-            cli + ' core update-index 2>&1';
-        exec(initCmd, { timeout: 60000 }, (err, out) => {
-            if (err) this._log('WARN', 'COMPILE', 'Config-Init Fehler: ' + (out || '').split('\n')[0]);
-            else this._log('INFO', 'COMPILE', 'arduino-cli Konfiguration initialisiert.');
+        if (!cli) {
+            if (cb) cb(new Error('arduino-cli nicht verfügbar'));
+            return;
+        }
+        // config init without --overwrite (keeps existing settings); add URLs; update index
+        let cmd = cli + ' config init 2>&1';
+        ESP_BOARD_URLS.forEach(u => {
+            cmd += '; ' + cli + ' config add board_manager.additional_urls ' + u + ' 2>&1';
+        });
+        cmd += '; ' + cli + ' core update-index 2>&1';
+        exec(cmd, { timeout: 180000 }, (err, out) => {
+            const tail = (out || (err && err.message) || '').toString().trim().split('\n').slice(-2).join(' | ');
+            if (err && !/already exists|already present|duplicate/i.test(out || '')) {
+                this._log('WARN', 'COMPILE', 'Board-Index Update: ' + (tail || err.message));
+            } else {
+                this._log('INFO', 'COMPILE', 'arduino-cli Board-URLs/Index bereit.');
+            }
+            if (cb) cb(null);
         });
     }
 
@@ -1081,10 +1102,23 @@ class EspHub extends utils.Adapter {
             return;
         }
 
-        // ── Arduino-CLI Install (trigger) ──
+        // ── Arduino-CLI Install / Config refresh ──
         if (url === '/api/arduino-install' && req.method === 'POST') {
-            if (this.arduinoCliReady) { json({ ok: true, message: 'Bereits installiert.' }); return; }
             this.compileLog = [];
+            const addLine = (line, isErr) => {
+                this.compileLog.unshift({ ts: new Date().toISOString(), line, err: !!isErr });
+            };
+            if (this.arduinoCliReady) {
+                this.compileRunning = true;
+                addLine('▶ Board-URLs und Core-Index aktualisieren...', false);
+                json({ ok: true, message: 'Konfiguration wird aktualisiert...' });
+                this._ensureArduinoConfig((err) => {
+                    this.compileRunning = false;
+                    if (err) addLine('❌ ' + err.message, true);
+                    else addLine('✅ Board-URLs/Index bereit — jetzt ESP32/ESP8266 Board-Paket installieren.', false);
+                });
+                return;
+            }
             json({ ok: true, message: 'Installation gestartet...' });
             this._installArduinoCli();
             return;
@@ -1198,18 +1232,22 @@ class EspHub extends utils.Adapter {
             const addLine = (line, isErr) => { this.compileLog.unshift({ ts: new Date().toISOString(), line, err: isErr || false }); };
             this.compileLog = [];
             this.compileRunning = true;
-            addLine('▶ ' + cli + ' core install ' + platform, false);
+            addLine('▶ Board-URLs/Index prüfen...', false);
             json({ ok: true, message: 'Board-Installation gestartet...' });
-            exec(cli + ' core install ' + platform + ' 2>&1', { timeout: 300000 }, (err, out) => {
-                this.compileRunning = false;
-                (out || '').split('\n').forEach(l => { if (l.trim()) addLine(l.trim(), false); });
-                if (err) {
-                    addLine('❌ Fehler: ' + err.message, true);
-                    this._log('ERROR', 'COMPILE', 'Board-Install fehlgeschlagen: ' + platform);
-                } else {
-                    addLine('✅ Board-Paket installiert: ' + platform, false);
-                    this._log('INFO', 'COMPILE', 'Board-Paket installiert: ' + platform);
-                }
+            this._ensureArduinoConfig(() => {
+                addLine('▶ ' + cli + ' core install ' + platform, false);
+                exec(cli + ' core install ' + platform + ' 2>&1', { timeout: 600000 }, (err, out) => {
+                    this.compileRunning = false;
+                    (out || '').split('\n').forEach(l => { if (l.trim()) addLine(l.trim(), false); });
+                    if (err) {
+                        addLine('❌ Fehler: ' + err.message, true);
+                        this._log('ERROR', 'COMPILE', 'Board-Install fehlgeschlagen: ' + platform);
+                    } else {
+                        addLine('✅ Board-Paket installiert: ' + platform, false);
+                        addLine('ℹ Chip-Varianten liegen unter ~/.arduino15/packages/esp32/tools/ — ungenutzte kannst du unten löschen.', false);
+                        this._log('INFO', 'COMPILE', 'Board-Paket installiert: ' + platform);
+                    }
+                });
             });
             return;
         }
@@ -1548,7 +1586,8 @@ class EspHub extends utils.Adapter {
             '  <div class="card">',
             '    <h3>&#127760; ESP32 Chip-Varianten verwalten</h3>',
             '    <div style="font-size:12px;color:var(--muted);margin-bottom:12px">',
-            '      W&auml;hle nur die Chips aus die du verwendest. Nicht ben&ouml;tigte Varianten sparen mehrere GB Speicher.',
+            '      Zuerst <b>+ ESP32 Board-Paket</b> installieren (l&auml;dt alle Chip-Libs). Danach ungenutzte Varianten l&ouml;schen, um Speicher zu sparen.<br>',
+            '      Fehlende Varianten: erneut <b>+ ESP32 Board-Paket</b> oder <b>Wiederherstellen</b> — arduino-cli l&auml;dt nur fehlende Tools nach.',
             '    </div>',
             '    <div id="chip-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:8px;margin-bottom:12px">',
             '      <div class="chip-item" data-dir="esp32-libs"><label><input type="checkbox" id="chip-esp32"> <b>ESP32</b> <span style="color:var(--muted);font-size:11px">(D1 Mini, Dev Module)</span></label><div class="chip-size" id="sz-esp32-libs">?</div></div>',
@@ -1563,11 +1602,12 @@ class EspHub extends utils.Adapter {
             '      <div class="chip-item" data-dir="xtensa-esp-elf-gdb"><label><input type="checkbox" id="chip-xt-gdb"> <b>Xtensa Debugger</b> <span style="color:var(--muted);font-size:11px">(GDB)</span></label><div class="chip-size" id="sz-xtensa-esp-elf-gdb">?</div></div>',
             '    </div>',
             '    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">',
+            '      <button class="btn btn-sm btn-green" id="chip-restore-btn">&#8635; Fehlende wiederherstellen</button>',
             '      <button class="btn btn-sm btn-red" id="chip-delete-btn">&#128465; Ausgew&auml;hlte l&ouml;schen</button>',
             '      <button class="btn btn-sm btn-blue" id="chip-refresh-btn">&#8635; Gr&ouml;&szlig;en laden</button>',
             '      <span id="chip-result" style="font-size:12px;color:var(--green)"></span>',
             '    </div>',
-            '    <div style="margin-top:8px;font-size:11px;color:var(--dim)">Pfad: ~/.arduino15/packages/esp32/tools/</div>',
+            '    <div style="margin-top:8px;font-size:11px;color:var(--dim)">Pfad: ~/.arduino15/packages/esp32/tools/ &mdash; Checkboxen nur f&uuml;r vorhandene Varianten (zum L&ouml;schen)</div>',
             '  </div>',
             '  <div class="card">',
             '    <h3>&#128465; Speicher bereinigen</h3>',
@@ -2379,7 +2419,11 @@ class EspHub extends utils.Adapter {
             '  if(el)el.textContent="Lade...";',
             '  fetch("/api/board-list").then(function(r){return r.json();}).then(function(d){',
             '    if(!el)return;',
-            '    if(!d.cores||!d.cores.length){el.textContent="Keine Board-Pakete installiert.";return;}',
+            '    if(!d.cores||!d.cores.length){',
+            '      el.innerHTML=\'<span style="color:var(--yellow)">Keine Board-Pakete installiert.</span> \' +',
+            '        \'Klicke oben auf <b>+ ESP32 Board-Paket</b> (laedt Chip-Varianten, kann 1-2 GB und einige Minuten dauern).\';',
+            '      return;',
+            '    }',
             '    var h="";',
             '    d.cores.forEach(function(c){',
             '      var size=c.id.indexOf("esp32")>=0?"~1-2 GB":"~200 MB";',
@@ -2468,6 +2512,16 @@ class EspHub extends utils.Adapter {
             '}',
             '',
             'document.getElementById("chip-refresh-btn").addEventListener("click",loadChipDirs);',
+            'document.getElementById("chip-restore-btn").addEventListener("click",function(){',
+            '  if(!confirm("Fehlende Chip-Varianten wiederherstellen?\\n\\nDas installiert/aktualisiert das ESP32 Board-Paket und laedt fehlende Tools nach (kann mehrere Minuten dauern)."))return;',
+            '  var term=document.getElementById("compile-term");',
+            '  if(term)term.innerHTML="";',
+            '  var res=document.getElementById("chip-result");',
+            '  if(res)res.textContent="Wiederherstellung gestartet — Log im Kompilieren-Terminal...";',
+            '  fetch("/api/board-install",{method:"POST",headers:{"Content-Type":"application/json"},',
+            '    body:JSON.stringify({platform:"esp32:esp32"})})',
+            '  .then(function(){pollCompileLog(function(){loadCoreList();loadChipDirs();if(res)res.textContent="\\u2705 Fertig — Chip-Größen aktualisiert.";});});',
+            '});',
             'document.getElementById("chip-delete-btn").addEventListener("click",function(){',
             '  var dirMap={',
             '    "chip-esp32":"esp32-libs",',
@@ -2487,7 +2541,7 @@ class EspHub extends utils.Adapter {
             '    if(cb&&cb.checked)toDelete.push(dirMap[cbId]);',
             '  });',
             '  if(!toDelete.length){alert("Keine Chip-Varianten ausgewaehlt.");return;}',
-            '  if(!confirm("Diese "+toDelete.length+" Chip-Variante(n) wirklich loeschen?\\n"+toDelete.join("\\n")+"\\n\\nDies ist nicht rueckgaengig zu machen!"))return;',
+            '  if(!confirm("Diese "+toDelete.length+" Chip-Variante(n) wirklich loeschen?\\n"+toDelete.join("\\n")+"\\n\\nWiederherstellen geht danach ueber \\"Fehlende wiederherstellen\\"."))return;',
             '  var res=document.getElementById("chip-result");',
             '  if(res)res.textContent="Loeschen...";',
             '  fetch("/api/chip-delete",{method:"POST",headers:{"Content-Type":"application/json"},',
@@ -2500,11 +2554,13 @@ class EspHub extends utils.Adapter {
             '});',
             '',
             'document.getElementById("ac-install-btn").addEventListener("click",function(){',
-            '  if(!confirm("arduino-cli neu installieren?"))return;',
+            '  if(!confirm("arduino-cli Board-URLs/Index aktualisieren (bzw. neu installieren)?"))return;',
+            '  var term=document.getElementById("compile-term");',
+            '  if(term)term.innerHTML="";',
             '  fetch("/api/arduino-install",{method:"POST"}).then(function(){',
+            '    pollCompileLog(function(){loadArduinoStatus();loadCoreList();});',
             '    setTimeout(loadArduinoStatus,5000);',
             '    setTimeout(loadArduinoStatus,15000);',
-            '    setTimeout(loadArduinoStatus,30000);',
             '  });',
             '});',
             '',
@@ -2513,7 +2569,7 @@ class EspHub extends utils.Adapter {
             '  if(term)term.innerHTML="";',
             '  fetch("/api/board-install",{method:"POST",headers:{"Content-Type":"application/json"},',
             '    body:JSON.stringify({platform:"esp32:esp32"})})',
-            '  .then(function(){pollCompileLog();});',
+            '  .then(function(){pollCompileLog(function(){loadCoreList();loadChipDirs();});});',
             '});',
             '',
             'document.getElementById("ac-esp8266-btn").addEventListener("click",function(){',
@@ -2521,7 +2577,7 @@ class EspHub extends utils.Adapter {
             '  if(term)term.innerHTML="";',
             '  fetch("/api/board-install",{method:"POST",headers:{"Content-Type":"application/json"},',
             '    body:JSON.stringify({platform:"esp8266:esp8266"})})',
-            '  .then(function(){pollCompileLog();});',
+            '  .then(function(){pollCompileLog(function(){loadCoreList();});});',
             '});',
             '',
             '// ── .ino Upload ───────────────────────────────────',

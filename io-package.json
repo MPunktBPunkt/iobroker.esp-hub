@@ -1,137 +1,115 @@
 {
   "common": {
     "name": "esp-hub",
-    "version": "0.5.1",
+    "version": "0.5.2",
     "news": {
-      "0.1.0": {
-        "en": "Initial release: ESP32/ESP8266 device management, heartbeat registration, OTA firmware updates, Web-UI",
-        "de": "Erstveröffentlichung: ESP32/ESP8266-Geräteverwaltung, Heartbeat-Registrierung, OTA-Firmware-Updates, Web-UI"
+      "0.5.2": {
+        "en": "Fix: always configure Espressif/ESP8266 board URLs so chip variants can be installed; restore missing chips via Web-UI; closer to official adapter package layout",
+        "de": "Fix: Espressif/ESP8266 Board-URLs werden immer gesetzt, damit Chip-Varianten installierbar sind; Fehlende Chips per Web-UI wiederherstellen; naeher am offiziellen Adapter-Layout"
       },
-      "0.2.0": {
-        "en": "New: USB programming tab, esptool.py auto-install",
-        "de": "Neu: USB-Programmier-Tab, esptool.py Auto-Installation"
-      },
-      "0.2.1": {
-        "en": "Fix: esptool auto-install via apt, pip3+pip fallback chain",
-        "de": "Fix: esptool Auto-Install via apt, pip3+pip Fallback-Kette"
-      },
-      "0.2.2": {
-        "en": "Fix: esptool install uses sudo -n apt/pip3, fallback pip3 --user",
-        "de": "Fix: esptool Install mit sudo -n apt/pip3, Fallback pip3 --user"
-      },
-      "0.2.3": {
-        "en": "Fix: pip3 --user first (no sudo), apt as last fallback, manual hint in UI",
-        "de": "Fix: pip3 --user zuerst (kein sudo), apt als letzter Fallback, Hinweis in UI"
-      },
-      "0.2.4": {
-        "en": "Fix: pip3 install esptool without flags first (Ubuntu pip22 compatible)",
-        "de": "Fix: pip3 install esptool ohne Flags zuerst (Ubuntu pip22 kompatibel)"
-      },
-      "0.2.5": {
-        "en": "New: Compile tab — upload .ino, compile with arduino-cli, auto-install",
-        "de": "Neu: Kompilieren-Tab — .ino hochladen, mit arduino-cli kompilieren, Auto-Install"
-      },
-      "0.2.6": {
-        "en": "Bugfix: JS syntax error in Compile tab (ternary missing false branch)",
-        "de": "Bugfix: JS-Syntaxfehler im Kompilieren-Tab (fehlender Ternary-Fallback)"
-      },
-      "0.2.7": {
-        "en": "Add Wemos D1 Mini ESP32 board, 921600 baud as default",
-        "de": "Wemos D1 Mini ESP32 ergänzt, 921600 Baud als Standard"
-      },
-      "0.2.8": {
-        "en": "New: Bundled firmware esp-hub-base v1.2.0 for Wemos D1 Mini ESP32 — ready to flash out of the box",
-        "de": "Neu: Standard-Firmware esp-hub-base v1.2.0 für Wemos D1 Mini ESP32 direkt mitgeliefert"
-      },
-      "0.2.9": {
-        "en": "New: Serial Monitor in Programmieren tab — live ESP32 debug output",
-        "de": "Neu: Serieller Monitor im Programmieren-Tab — Live-Debug-Ausgabe vom ESP32"
-      },
-      "0.3.0": {
-        "en": "New: Library install button (WiFiManager + ArduinoJson), ANSI stripping in compile output",
-        "de": "Neu: Bibliotheken-Button (WiFiManager + ArduinoJson), ANSI-Codes aus Compiler-Ausgabe entfernt"
-      },
-      "0.3.1": {
-        "en": "New: Categorized library manager with 20+ libraries (Display, Sensors, LED, Energy...)",
-        "de": "Neu: Kategorisierter Bibliotheks-Manager mit 20+ Bibliotheken (Display, Sensoren, LED, Energie...)"
-      },
-      "0.3.2": {
-        "en": "Bugfix: SyntaxError from invalid unicode escape in browser JS",
-        "de": "Bugfix: SyntaxError durch ungültiges Unicode-Escape im Browser-JS"
-      },
-      "0.3.3": {
-        "en": "Bugfix: missing function wrapper for Neu installieren button",
-        "de": "Bugfix: fehlende Funktion um Neu-installieren-Button"
-      },
-      "0.3.4": {
-        "en": "Bugfix: missing function wrapper for Adapter aktualisieren button",
-        "de": "Bugfix: fehlende Funktion um Adapter-aktualisieren-Button"
-      },
-      "0.3.5": {
-        "en": "New: ESP32-S3 WROOM-1 (4MB) with correct FQBN in board dropdown, CH343 driver hint",
-        "de": "Neu: ESP32-S3 WROOM-1 (4MB) mit korrekter FQBN im Board-Dropdown, CH343-Treiber-Hinweis"
-      },
-      "0.3.6": {
-        "en": "Fix: min_spiffs partition for ESP32-S3 and D1 Mini (reduces flash usage from 89% to ~57%), ESP32-S3 USB hint",
-        "de": "Fix: min_spiffs Partition fuer ESP32-S3 und D1 Mini (Flash-Auslastung von 89% auf ~57%), ESP32-S3 USB-Hinweis"
-      },
-      "0.4.0": {
-        "en": "New: chipModel + freeSketch in heartbeat and device cards, pinout panel, fixed buttons",
-        "de": "Neu: chipModel + freeSketch im Heartbeat und Geraetekarten, Pinout-Panel, Buttons repariert"
-      },
-      "0.4.1": {
-        "en": "Bugfix: stray semicolon in device card JS (SyntaxError line 542)",
-        "de": "Bugfix: ueberzähliges Semikolon in Gerätekarte JS (SyntaxError Zeile 542)"
-      },
-      "0.4.2": {
-        "en": "Fix: OTA URL uses actual server IP from ESP heartbeat connection (not adapterHost config)",
-        "de": "Fix: OTA-URL nutzt echte Server-IP aus ESP-Heartbeat-Verbindung (nicht adapterHost-Config)"
-      },
-      "0.4.3": {
-        "en": "Bugfix: FQBN with partition params now passed as array args to spawn (not string split)",
-        "de": "Bugfix: FQBN mit Partition-Parametern wird als Array an spawn uebergeben (nicht String-Split)"
-      },
-      "0.4.4": {
-        "en": "Bugfix: FQBN sanitization stripped = sign, breaking PartitionScheme parameter",
-        "de": "Bugfix: FQBN-Sanitization hat = entfernt, PartitionScheme-Parameter war ungueltig"
-      },
-      "0.4.5": {
-        "en": "Bugfix: ESP32-S3 FQBN removed invalid FlashFreq/FlashMode params (not supported by arduino-cli)",
-        "de": "Bugfix: ESP32-S3 FQBN ohne FlashFreq/FlashMode (von arduino-cli nicht unterstuetzt)"
-      },
-      "0.4.6": {
-        "en": "Bugfix: ESP32-S3 FQBN simplified to PartitionScheme=min_spiffs only",
-        "de": "Bugfix: ESP32-S3 FQBN auf PartitionScheme=min_spiffs vereinfacht"
-      },
-      "0.4.7": {
-        "en": "New: Board manager (list/uninstall installed cores), copy compile log to clipboard",
-        "de": "Neu: Board-Manager (installierte Cores anzeigen und entfernen), Kompilier-Log in Zwischenablage kopieren"
-      },
-      "0.4.8": {
-        "en": "Bugfix: missing function wrapper for ac-install-btn (caused SyntaxError)",
-        "de": "Bugfix: fehlender Funktion-Wrapper fuer ac-install-btn (verursachte SyntaxError)"
-      },
-      "0.4.9": {
-        "en": "New: auto-cleanup build dirs after compile, disk usage display, manual cleanup button",
-        "de": "Neu: Build-Verzeichnisse automatisch nach Kompilierung loeschen, Speicher-Anzeige, Bereinigung-Button"
+      "0.5.1": {
+        "en": "Fix: compile fields in every tab (missing card wrapper); new chip variant manager (delete unused ESP32 chip libs)",
+        "de": "Fix: Kompilier-Felder in jedem Tab (fehlender card-wrapper); Chip-Varianten-Manager zum Loeschen ungenutzter ESP32-Libs"
       },
       "0.5.0": {
         "en": "Fix: cleanup also removes arduino-cli sketch cache (~/.cache/arduino/sketches)",
         "de": "Fix: Bereinigung entfernt auch arduino-cli Cache (~/.cache/arduino/sketches)"
       },
-      "0.5.1": {
-        "en": "Fix: compile fields in every tab (missing card wrapper); new chip variant manager (delete unused ESP32 chip libs)",
-        "de": "Fix: Kompilier-Felder in jedem Tab (fehlender card-wrapper); Chip-Varianten-Manager zum Loeschen ungenutzter ESP32-Libs"
+      "0.4.9": {
+        "en": "New: auto-cleanup build dirs after compile, disk usage display, manual cleanup button",
+        "de": "Neu: Build-Verzeichnisse automatisch nach Kompilierung loeschen, Speicher-Anzeige, Bereinigung-Button"
+      },
+      "0.4.8": {
+        "en": "Bugfix: missing function wrapper for ac-install-btn (caused SyntaxError)",
+        "de": "Bugfix: fehlender Funktion-Wrapper fuer ac-install-btn (verursachte SyntaxError)"
+      },
+      "0.4.7": {
+        "en": "New: Board manager (list/uninstall installed cores), copy compile log to clipboard",
+        "de": "Neu: Board-Manager (installierte Cores anzeigen und entfernen), Kompilier-Log in Zwischenablage kopieren"
+      },
+      "0.4.6": {
+        "en": "Bugfix: ESP32-S3 FQBN simplified to PartitionScheme=min_spiffs only",
+        "de": "Bugfix: ESP32-S3 FQBN auf PartitionScheme=min_spiffs vereinfacht"
+      },
+      "0.4.5": {
+        "en": "Bugfix: ESP32-S3 FQBN removed invalid FlashFreq/FlashMode params (not supported by arduino-cli)",
+        "de": "Bugfix: ESP32-S3 FQBN ohne FlashFreq/FlashMode (von arduino-cli nicht unterstuetzt)"
+      },
+      "0.4.4": {
+        "en": "Bugfix: FQBN sanitization stripped = sign, breaking PartitionScheme parameter",
+        "de": "Bugfix: FQBN-Sanitization hat = entfernt, PartitionScheme-Parameter war ungueltig"
+      },
+      "0.4.3": {
+        "en": "Bugfix: FQBN with partition params now passed as array args to spawn (not string split)",
+        "de": "Bugfix: FQBN mit Partition-Parametern wird als Array an spawn uebergeben (nicht String-Split)"
+      },
+      "0.4.2": {
+        "en": "Fix: OTA URL uses actual server IP from ESP heartbeat connection (not adapterHost config)",
+        "de": "Fix: OTA-URL nutzt echte Server-IP aus ESP-Heartbeat-Verbindung (nicht adapterHost-Config)"
+      },
+      "0.4.1": {
+        "en": "Bugfix: stray semicolon in device card JS (SyntaxError line 542)",
+        "de": "Bugfix: ueberzähliges Semikolon in Gerätekarte JS (SyntaxError Zeile 542)"
+      },
+      "0.4.0": {
+        "en": "New: chipModel + freeSketch in heartbeat and device cards, pinout panel, fixed buttons",
+        "de": "Neu: chipModel + freeSketch im Heartbeat und Geraetekarten, Pinout-Panel, Buttons repariert"
+      },
+      "0.3.6": {
+        "en": "Fix: min_spiffs partition for ESP32-S3 and D1 Mini (reduces flash usage from 89% to ~57%), ESP32-S3 USB hint",
+        "de": "Fix: min_spiffs Partition fuer ESP32-S3 und D1 Mini (Flash-Auslastung von 89% auf ~57%), ESP32-S3 USB-Hinweis"
+      },
+      "0.3.5": {
+        "en": "New: ESP32-S3 WROOM-1 (4MB) with correct FQBN in board dropdown, CH343 driver hint",
+        "de": "Neu: ESP32-S3 WROOM-1 (4MB) mit korrekter FQBN im Board-Dropdown, CH343-Treiber-Hinweis"
+      },
+      "0.3.4": {
+        "en": "Bugfix: missing function wrapper for Adapter aktualisieren button",
+        "de": "Bugfix: fehlende Funktion um Adapter-aktualisieren-Button"
+      },
+      "0.3.3": {
+        "en": "Bugfix: missing function wrapper for Neu installieren button",
+        "de": "Bugfix: fehlende Funktion um Neu-installieren-Button"
+      },
+      "0.3.2": {
+        "en": "Bugfix: SyntaxError from invalid unicode escape in browser JS",
+        "de": "Bugfix: SyntaxError durch ungültiges Unicode-Escape im Browser-JS"
+      },
+      "0.3.1": {
+        "en": "New: Categorized library manager with 20+ libraries (Display, Sensors, LED, Energy...)",
+        "de": "Neu: Kategorisierter Bibliotheks-Manager mit 20+ Bibliotheken (Display, Sensoren, LED, Energie...)"
+      },
+      "0.3.0": {
+        "en": "New: Library install button (WiFiManager + ArduinoJson), ANSI stripping in compile output",
+        "de": "Neu: Bibliotheken-Button (WiFiManager + ArduinoJson), ANSI-Codes aus Compiler-Ausgabe entfernt"
       }
     },
     "title": "ESP-Hub",
     "titleLang": {
+      "en": "ESP-Hub – ESP32/ESP8266 Manager",
       "de": "ESP-Hub – ESP32/ESP8266 Manager",
-      "en": "ESP-Hub – ESP32/ESP8266 Manager"
+      "ru": "ESP-Hub – менеджер ESP32/ESP8266",
+      "pt": "ESP-Hub – Gerenciador ESP32/ESP8266",
+      "nl": "ESP-Hub – ESP32/ESP8266-beheer",
+      "fr": "ESP-Hub – Gestionnaire ESP32/ESP8266",
+      "it": "ESP-Hub – Gestore ESP32/ESP8266",
+      "es": "ESP-Hub – Administrador ESP32/ESP8266",
+      "pl": "ESP-Hub – menedżer ESP32/ESP8266",
+      "uk": "ESP-Hub – менеджер ESP32/ESP8266",
+      "zh-cn": "ESP-Hub – ESP32/ESP8266 管理器"
     },
     "desc": {
+      "en": "Manages all ESP32 and ESP8266 devices in your WiFi network: registration, status, IOs and OTA updates.",
       "de": "Verwaltet alle ESP32 und ESP8266 Geräte im WLAN: Registrierung, Status, IOs und OTA-Updates.",
-      "en": "Manages all ESP32 and ESP8266 devices in your WiFi network: registration, status, IOs and OTA updates."
+      "ru": "Управление устройствами ESP32 и ESP8266: регистрация, статус, IO и OTA.",
+      "pt": "Gerencia dispositivos ESP32 e ESP8266: registro, status, IOs e OTA.",
+      "nl": "Beheert ESP32- en ESP8266-apparaten: registratie, status, IOs en OTA.",
+      "fr": "Gère les appareils ESP32 et ESP8266 : enregistrement, statut, E/S et OTA.",
+      "it": "Gestisce dispositivi ESP32 ed ESP8266: registrazione, stato, IO e OTA.",
+      "es": "Gestiona dispositivos ESP32 y ESP8266: registro, estado, IOs y OTA.",
+      "pl": "Zarządza urządzeniami ESP32 i ESP8266: rejestracja, status, IO i OTA.",
+      "uk": "Керує пристроями ESP32 та ESP8266: реєстрація, статус, IO та OTA.",
+      "zh-cn": "管理 WiFi 中的 ESP32/ESP8266 设备：注册、状态、IO 与 OTA。"
     },
     "authors": [
       "Martin Buchmann <martin@bchmnn.de>"
@@ -144,13 +122,21 @@
       "iot",
       "hub"
     ],
-    "license": "GPL-3.0",
-    "platform": "Node.js",
+    "licenseInformation": {
+      "license": "GPL-3.0-only",
+      "type": "free"
+    },
+    "platform": "Javascript/Node.js",
     "main": "main.js",
     "icon": "esp-hub.svg",
+    "extIcon": "https://raw.githubusercontent.com/MPunktBPunkt/iobroker.esp-hub/main/admin/esp-hub.svg",
+    "readme": "https://github.com/MPunktBPunkt/iobroker.esp-hub/blob/main/README.md",
+    "loglevel": "info",
+    "tier": 3,
     "enabled": true,
     "mode": "daemon",
     "type": "iot-devices",
+    "compact": true,
     "readyTimeout": 60000,
     "javascriptThreadType": "worker",
     "connectionType": "local",
@@ -166,8 +152,13 @@
         "js-controller": ">=5.0.0"
       }
     ],
+    "globalDependencies": [
+      {
+        "admin": ">=6.0.0"
+      }
+    ],
     "engines": {
-      "node": ">=16"
+      "node": ">=18"
     }
   },
   "native": {

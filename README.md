@@ -1,6 +1,6 @@
 # iobroker.esp-hub
 
-![Version](https://img.shields.io/badge/version-0.5.1-blue)
+![Version](https://img.shields.io/badge/version-0.5.2-blue)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 [![Donate](https://img.shields.io/badge/Donate-PayPal-00457C.svg?logo=paypal)](https://www.paypal.com/donate/?business=martin%40bchmnn.de&currency_code=EUR)
 
@@ -176,6 +176,12 @@ GNU General Public License v3.0 © MPunktBPunkt — siehe [LICENSE](LICENSE)
 ---
 
 ## Changelog
+
+### 0.5.2
+- Fix: Espressif/ESP8266 Board-URLs werden bei jedem Start gesetzt (Chip-Varianten wieder installierbar)
+- Neu: Button „Fehlende wiederherstellen“ im Chip-Manager
+- Board-Install führt vorher `core update-index` aus
+- Näher am offiziellen Adapter-Template (`files`, Tests, CI, `licenseInformation`, `extIcon`, `readme`)
 
 ### 0.4.6
 - Bugfix: ESP32-S3 FQBN vereinfacht (nur PartitionScheme=min_spiffs)
