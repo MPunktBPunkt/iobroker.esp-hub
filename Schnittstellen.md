@@ -171,6 +171,22 @@ GitHub-Versionsvergleich.
 
 ---
 
+### POST /api/webrtc
+
+WebRTC-Signaling-Relay für Communicator-Browseranrufe (CORS `*`).
+
+**Body:** `{ "from": "AABBCCDDEEFF", "to": "112233445566", "type": "offer|answer|ice|bye", "payload": {} }`
+
+**Response:** `{ "ok": true, "id": 42 }`
+
+### GET /api/webrtc?mac=AABBCCDDEEFF&after=0
+
+Liefert Signaling-Nachrichten für die Ziel-MAC seit Signal-ID `after`.
+
+**Response:** `{ "ok": true, "signals": [ { "id": 42, "from": "...", "to": "...", "type": "offer", "payload": {}, "ts": 0 } ] }`
+
+---
+
 ### POST /api/firmware-upload
 
 Firmware-Datei hochladen (Multipart Form-Data).

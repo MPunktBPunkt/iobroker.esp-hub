@@ -7,7 +7,7 @@ const fs       = require('fs');
 const path     = require('path');
 const { exec } = require('child_process');
 
-const ADAPTER_VERSION = '0.5.4';
+const ADAPTER_VERSION = '0.5.8';
 const NODE_ONLINE_SEC = 120;
 const FIRMWARE_DIR    = '/tmp/iobroker-esphub-fw';
 const SKETCH_DIR      = '/tmp/iobroker-esphub-sketches';
@@ -113,6 +113,8 @@ class EspHub extends utils.Adapter {
         this.serialPort       = '';   // aktuell geöffneter Port
         this.httpServer       = null;
         this.pack             = {};
+        this.webrtcSignals    = {}; // mac12 -> [{id,from,to,type,payload,ts}]
+        this.webrtcSeq        = 1;
         try { this.pack = require('./package.json'); } catch (e) { /* ignore */ }
 
         this.on('ready',  this.onReady.bind(this));
@@ -1011,6 +1013,18 @@ class EspHub extends utils.Adapter {
             req.on('end',  () => resolve(Buffer.concat(chunks)));
         });
 
+        // ── CORS preflight (WebRTC signaling from ESP web UIs) ──
+        if (req.method === 'OPTIONS') {
+            res.writeHead(204, {
+                'Access-Control-Allow-Origin': '*',
+                'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
+                'Access-Control-Allow-Headers': 'Content-Type',
+                'Access-Control-Max-Age': '86400'
+            });
+            res.end();
+            return;
+        }
+
         // ── Web UI ──
         if (url === '/' || url === '/index.html') {
             res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
@@ -1020,6 +1034,49 @@ class EspHub extends utils.Adapter {
 
         // ── Static ping ──
         if (url === '/api/ping') { json({ ok: true, ts: Date.now() }); return; }
+
+        // ── WebRTC signaling relay (browser ↔ browser via hub) ──
+        if (url === '/api/webrtc' && req.method === 'POST') {
+            const body = await readBody();
+            let data = {};
+            try { data = JSON.parse(body.toString()); } catch (e) { /* ignore */ }
+            const from = sanitizeMac(data.from || '');
+            const to   = sanitizeMac(data.to || '');
+            const type = String(data.type || '').slice(0, 16);
+            if (!from || !to || !type) {
+                json({ ok: false, error: 'from, to, type erforderlich' }, 400);
+                return;
+            }
+            if (!this.webrtcSignals[to]) this.webrtcSignals[to] = [];
+            const entry = {
+                id: this.webrtcSeq++,
+                from, to, type,
+                payload: data.payload != null ? data.payload : null,
+                ts: Date.now()
+            };
+            this.webrtcSignals[to].push(entry);
+            // Keep last 40 signals per target
+            if (this.webrtcSignals[to].length > 40) {
+                this.webrtcSignals[to] = this.webrtcSignals[to].slice(-40);
+            }
+            // Expire old queues (>2 min)
+            const cut = Date.now() - 120000;
+            Object.keys(this.webrtcSignals).forEach(mac => {
+                this.webrtcSignals[mac] = (this.webrtcSignals[mac] || []).filter(s => s.ts >= cut);
+                if (!this.webrtcSignals[mac].length) delete this.webrtcSignals[mac];
+            });
+            this._log('INFO', 'WEBRTC', type + ' ' + from + ' → ' + to);
+            json({ ok: true, id: entry.id });
+            return;
+        }
+        if (url === '/api/webrtc' && req.method === 'GET') {
+            const mac = sanitizeMac(qs.mac || '');
+            const after = parseInt(qs.after || '0', 10) || 0;
+            if (!mac) { json({ ok: false, error: 'mac erforderlich' }, 400); return; }
+            const list = (this.webrtcSignals[mac] || []).filter(s => s.id > after);
+            json({ ok: true, signals: list });
+            return;
+        }
 
         // ── Stats ──
         if (url === '/api/stats') {

@@ -1,8 +1,12 @@
 {
   "common": {
     "name": "esp-hub",
-    "version": "0.5.7",
+    "version": "0.5.8",
     "news": {
+      "0.5.8": {
+        "en": "WebRTC signaling relay (/api/webrtc) for Communicator browser voice/video calls",
+        "de": "WebRTC-Signaling-Relay (/api/webrtc) fuer Communicator Sprach-/Videoanrufe im Browser"
+      },
       "0.5.7": {
         "en": "Ignore LXC placeholder USB nodes; list only real character devices",
         "de": "LXC-Platzhalter-USB-Nodes ignorieren; nur echte Character-Devices listen"
@@ -78,10 +82,6 @@
       "0.3.6": {
         "en": "Fix: min_spiffs partition for ESP32-S3 and D1 Mini (reduces flash usage from 89% to ~57%), ESP32-S3 USB hint",
         "de": "Fix: min_spiffs Partition fuer ESP32-S3 und D1 Mini (Flash-Auslastung von 89% auf ~57%), ESP32-S3 USB-Hinweis"
-      },
-      "0.3.5": {
-        "en": "New: ESP32-S3 WROOM-1 (4MB) with correct FQBN in board dropdown, CH343 driver hint",
-        "de": "Neu: ESP32-S3 WROOM-1 (4MB) mit korrekter FQBN im Board-Dropdown, CH343-Treiber-Hinweis"
       }
     },
     "title": "ESP-Hub",

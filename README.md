@@ -1,6 +1,6 @@
 # iobroker.esp-hub
 
-![Version](https://img.shields.io/badge/version-0.5.7-blue)
+![Version](https://img.shields.io/badge/version-0.5.8-blue)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 [![Donate](https://img.shields.io/badge/Donate-PayPal-00457C.svg?logo=paypal)](https://www.paypal.com/donate/?business=martin%40bchmnn.de&currency_code=EUR)
 
@@ -191,6 +191,10 @@ GNU General Public License v3.0 © MPunktBPunkt — siehe [LICENSE](LICENSE)
 ---
 
 ## Changelog
+
+### 0.5.8
+- WebRTC-Signaling (`POST/GET /api/webrtc`) + CORS für Communicator Browser-Anrufe
+- Communicator 1.6.0: Audio/Video im Browser, Klingeln weiter über ESP-NOW
 
 ### 0.5.7
 - Nur echte USB-Character-Devices listen (keine LXC-Platzhalter)
