@@ -757,18 +757,34 @@ class EspHub extends utils.Adapter {
     }
 
     _getUsbPorts(cb) {
-        exec('ls /dev/ttyUSB* /dev/ttyACM* 2>/dev/null', (err, stdout) => {
-            const ports = (stdout || '').split('\n')
-                .map(p => p.trim())
-                .filter(p => p.length > 0 && p.startsWith('/dev/'));
-            cb(ports);
-        });
+        const found = [];
+        const add = (p) => {
+            if (!p || found.indexOf(p) >= 0) return;
+            try {
+                if (fs.existsSync(p)) found.push(p);
+            } catch (e) { /* ignore */ }
+        };
+        try {
+            fs.readdirSync('/dev').forEach(name => {
+                if (/^ttyUSB\d+$/.test(name) || /^ttyACM\d+$/.test(name)) {
+                    add('/dev/' + name);
+                }
+            });
+        } catch (e) { /* ignore */ }
+        try {
+            const byId = '/dev/serial/by-id';
+            if (fs.existsSync(byId)) {
+                fs.readdirSync(byId).forEach(name => add(path.join(byId, name)));
+            }
+        } catch (e) { /* ignore */ }
+        found.sort();
+        cb(found);
     }
 
     _detectChipOnPort(port, cb) {
         const esptool = this._getEsptoolCmd();
         if (!esptool) { cb(new Error('esptool nicht verfügbar')); return; }
-        const safePort = String(port || '').replace(/[^a-zA-Z0-9/_.-]/g, '');
+        const safePort = String(port || '').replace(/[^a-zA-Z0-9/_.:+-]/g, '');
         if (!safePort.startsWith('/dev/')) { cb(new Error('Ungültiger Port')); return; }
         exec(esptool + ' --port ' + safePort + ' chip_id 2>&1', { timeout: 45000 }, (err, out) => {
             const text = String(out || '');
@@ -1803,6 +1819,11 @@ class EspHub extends utils.Adapter {
             '      <button class="btn btn-sm btn-blue" id="fl-refresh-btn">&#8635; Aktualisieren</button>',
             '      <button class="btn btn-sm" id="fl-detect-btn" disabled>&#128270; ESP erkennen</button>',
             '    </div>',
+            '    <div id="usb-port-hint" style="display:none;background:var(--bg2);border:1px solid rgba(227,179,65,.35);border-radius:6px;padding:10px 14px;margin-bottom:12px;font-size:12px;color:var(--muted)">',
+            '      <b style="color:var(--yellow)">Keine USB-Ports gefunden</b> (<code>/dev/ttyUSB*</code> / <code>/dev/ttyACM*</code> fehlen).<br>',
+            '      ESP am <b>ioBroker-Host</b> anstecken. L&auml;uft ioBroker in einem Proxmox-LXC/VM: USB-Passthrough setzen, CT neu starten,<br>',
+            '      dann im CT pr&uuml;fen: <code style="color:var(--accent)">ls -l /dev/ttyUSB* /dev/ttyACM*</code> und <code style="color:var(--accent)">sudo usermod -aG dialout iobroker</code>',
+            '    </div>',
             '    <div class="flash-row">',
             '      <label>Firmware</label>',
             '      <select id="fl-fw"><option value="">-- Firmware ausw&auml;hlen --</option></select>',
@@ -2469,6 +2490,8 @@ class EspHub extends utils.Adapter {
             '      if(smSel)smSel.innerHTML+=\'<option value="\'+p+\'">\'+p+\'</option>\';',
             '    });',
             '    if(cur&&d.ports.indexOf(cur)>=0)sel.value=cur;',
+            '    var ph=document.getElementById("usb-port-hint");',
+            '    if(ph)ph.style.display=(d.ports&&d.ports.length)?("none"):("block");',
             '    var badge=document.getElementById("esptool-status");',
             '    if(badge){',
             '      if(d.esptoolReady){',

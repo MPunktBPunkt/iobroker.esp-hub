@@ -1,8 +1,12 @@
 {
   "common": {
     "name": "esp-hub",
-    "version": "0.5.5",
+    "version": "0.5.6",
     "news": {
+      "0.5.6": {
+        "en": "Clearer USB empty-port hint (LXC passthrough) and scan /dev/serial/by-id",
+        "de": "Klarerer Hinweis bei fehlenden USB-Ports (LXC-Passthrough) und Scan von /dev/serial/by-id"
+      },
       "0.5.5": {
         "en": "Auto-provide esptool via Arduino bundle or user venv (no root pip required); install button in Flash tab",
         "de": "esptool wird automatisch bereitgestellt (Arduino-Bundle oder User-venv, ohne root-pip); Install-Button im Programmier-Tab"
@@ -78,10 +82,6 @@
       "0.3.4": {
         "en": "Bugfix: missing function wrapper for Adapter aktualisieren button",
         "de": "Bugfix: fehlende Funktion um Adapter-aktualisieren-Button"
-      },
-      "0.3.3": {
-        "en": "Bugfix: missing function wrapper for Neu installieren button",
-        "de": "Bugfix: fehlende Funktion um Neu-installieren-Button"
       }
     },
     "title": "ESP-Hub",
