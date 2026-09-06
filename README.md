@@ -67,13 +67,28 @@ Web-UI: `http://<ioBroker-IP>:8093`
 
 Die Standard-Firmware `esp-hub-base` wird direkt mit dem Adapter mitgeliefert und erscheint automatisch im Firmware-Dropdown. Für den Wemos D1 Mini ESP32 ist eine vorkompilierte .bin enthalten — einfach USB anschließen und flashen.
 
+### Firmware-Dateinamen
+
+Einheitliches Schema (Chip-Familie am Ende):
+
+```
+{name}.{version}.{family}.bin
+```
+
+| Familie | Beispiel |
+|---|---|
+| `esp32` | `esp-hub-base.1.7.0.esp32.bin` (D1 Mini ESP32 u.ä.) |
+| `esp32s3` | `esp-hub-base.1.7.0.esp32s3.bin` |
+
+Kompilieren benennt die `.bin` automatisch so. Flash und OTA prüfen die Familie gegen den Chip — S3-Firmware lässt sich nicht auf einen klassischen ESP32 schreiben (und umgekehrt).
+
 ### Eigene Firmware kompilieren
 
 1. **Kompilieren-Tab** → `+ ESP32 Board-Paket` installieren
 2. **📚 Bibliotheken** → WiFiManager + ArduinoJson auswählen → installieren
 3. `.ino` per Drag & Drop hochladen
 4. Board wählen → **⚡ Kompilieren**
-5. .bin erscheint automatisch im Programmieren-Tab
+5. .bin erscheint automatisch im Programmieren-Tab (`name.boardFamily.bin`)
 
 ### Partition Scheme (Speicheraufteilung)
 
@@ -176,6 +191,11 @@ GNU General Public License v3.0 © MPunktBPunkt — siehe [LICENSE](LICENSE)
 ---
 
 ## Changelog
+
+### 0.5.3
+- Sicherheit: Flash/OTA nur bei passender Chip-Familie (kein S3-Bin auf D1 Mini)
+- Einheitliche Firmware-Namen: `{name}.{version}.{family}.bin` (`esp32` / `esp32s3` / …)
+- Gebündelte Firmware im Repo entsprechend umbenannt
 
 ### 0.5.2
 - Fix: Espressif/ESP8266 Board-URLs werden bei jedem Start gesetzt (Chip-Varianten wieder installierbar)

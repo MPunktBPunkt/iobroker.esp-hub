@@ -7,7 +7,7 @@ const fs       = require('fs');
 const path     = require('path');
 const { exec } = require('child_process');
 
-const ADAPTER_VERSION = '0.5.2';
+const ADAPTER_VERSION = '0.5.3';
 const NODE_ONLINE_SEC = 120;
 const FIRMWARE_DIR    = '/tmp/iobroker-esphub-fw';
 const SKETCH_DIR      = '/tmp/iobroker-esphub-sketches';
@@ -20,6 +20,78 @@ const ESP_BOARD_URLS  = [
 
 function sanitizeMac(mac) {
     return (mac || '').replace(/[^a-fA-F0-9]/g, '').toUpperCase().slice(0, 12);
+}
+
+/**
+ * Chip-family tags used in firmware filenames:
+ *   {name}.{version}.{family}.bin   e.g. esp-hub-base.1.7.0.esp32s3.bin
+ * More specific chips first so "esp32s3" is not classified as classic "esp32".
+ * @returns {string|null} e.g. 'esp32s3' | 'esp32' | 'esp8266' | null if unknown
+ */
+function boardFamilyFromText(text) {
+    const raw = String(text || '').toLowerCase();
+
+    // Prefer explicit trailing tag: name.version.esp32s3.bin
+    const tagMatch = raw.match(/\.([a-z0-9_-]+)\.bin$/);
+    if (tagMatch) {
+        const tag = tagMatch[1].replace(/[-_]/g, '');
+        const known = {
+            esp32s3: 'esp32s3', esp32s2: 'esp32s2', esp32c6: 'esp32c6',
+            esp32c5: 'esp32c5', esp32c3: 'esp32c3', esp32h2: 'esp32h2',
+            esp32p4: 'esp32p4', esp32: 'esp32', esp8266: 'esp8266',
+            // legacy board ids still accepted when parsing old names
+            d1mini32: 'esp32', minid1esp32: 'esp32', nodemcuv2: 'esp8266'
+        };
+        if (known[tag]) return known[tag];
+    }
+
+    const t = raw;
+    if (/esp32[-_]?s3|esp32s3/.test(t)) return 'esp32s3';
+    if (/esp32[-_]?s2|esp32s2/.test(t)) return 'esp32s2';
+    if (/esp32[-_]?c6|esp32c6/.test(t)) return 'esp32c6';
+    if (/esp32[-_]?c5|esp32c5/.test(t)) return 'esp32c5';
+    if (/esp32[-_]?c3|esp32c3/.test(t)) return 'esp32c3';
+    if (/esp32[-_]?h2|esp32h2/.test(t)) return 'esp32h2';
+    if (/esp32[-_]?p4|esp32p4/.test(t)) return 'esp32p4';
+    if (/esp8266|nodemcuv2|:d1_mini\b/.test(t)) return 'esp8266';
+    if (/d1[_-]?mini32|mini-d1-esp32|esp32-d0wd|esp32:esp32:esp32\b|esp32:esp32:d1_mini32/.test(t)) return 'esp32';
+    // bare chip model "ESP32" / filename leftover ".esp32.bin"
+    if (/(^|[^a-z0-9])esp32([^a-z0-9]|$)/.test(t) && !/esp32[-_]?s|esp32[-_]?c|esp32[-_]?h|esp32[-_]?p/.test(t)) return 'esp32';
+    return null;
+}
+
+/** Filename chip tag from FQBN — always the family (esp32 / esp32s3 / …). */
+function boardTagFromFqbn(fqbn) {
+    const family = boardFamilyFromText(fqbn);
+    if (family) return family;
+    const parts = String(fqbn || '').split(':');
+    const board = (parts[2] || '').split(/[=/]/)[0];
+    const clean = board.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+    return clean || 'unknown';
+}
+
+/**
+ * Refuse flashing S3 firmware onto classic ESP32 (and vice versa).
+ * Unknown sides are allowed so custom filenames still work.
+ * @returns {{ok:boolean, error?:string, fwFamily?:string|null, chipFamily?:string|null}}
+ */
+function checkFwChipCompatible(firmwareName, chipModel) {
+    const fwFamily   = boardFamilyFromText(firmwareName);
+    const chipFamily = boardFamilyFromText(chipModel);
+    if (!fwFamily || !chipFamily) {
+        return { ok: true, fwFamily, chipFamily };
+    }
+    if (fwFamily !== chipFamily) {
+        return {
+            ok: false,
+            fwFamily,
+            chipFamily,
+            error: 'Firmware ist für ' + fwFamily + ', Chip ist ' + chipFamily +
+                   ' (' + (chipModel || '?') + ') — Flash abgebrochen. ' +
+                   'Bitte passende .bin wählen (Schema: name.version.esp32s3.bin vs name.version.esp32.bin).'
+        };
+    }
+    return { ok: true, fwFamily, chipFamily };
 }
 
 // ─── Adapter ───────────────────────────────────────────────────────────────
@@ -451,10 +523,12 @@ class EspHub extends utils.Adapter {
                     const files = fs.readdirSync(outDir).filter(f => f.endsWith('.bin'));
                     if (files.length > 0) {
                         const src  = path.join(outDir, files[0]);
-                        const dest = path.join(FIRMWARE_DIR, sketchName + '.bin');
+                        const tag  = boardTagFromFqbn(fqbn);
+                        const destName = sketchName + '.' + tag + '.bin';
+                        const dest = path.join(FIRMWARE_DIR, destName);
                         fs.copyFileSync(src, dest);
-                        addLine('✅ Kompilierung erfolgreich! → ' + sketchName + '.bin', false);
-                        this._log('INFO', 'COMPILE', 'Kompilierung OK: ' + sketchName + '.bin');
+                        addLine('✅ Kompilierung erfolgreich! → ' + destName + ' [' + (boardFamilyFromText(fqbn) || tag) + ']', false);
+                        this._log('INFO', 'COMPILE', 'Kompilierung OK: ' + destName);
                     } else {
                         addLine('⚠️ Kompilierung OK aber keine .bin Datei gefunden.', true);
                     }
@@ -555,6 +629,26 @@ class EspHub extends utils.Adapter {
         });
     }
 
+    _detectChipOnPort(port, cb) {
+        const esptool = this._getEsptoolCmd();
+        if (!esptool) { cb(new Error('esptool nicht verfügbar')); return; }
+        const safePort = String(port || '').replace(/[^a-zA-Z0-9/_.-]/g, '');
+        if (!safePort.startsWith('/dev/')) { cb(new Error('Ungültiger Port')); return; }
+        exec(esptool + ' --port ' + safePort + ' chip_id 2>&1', { timeout: 45000 }, (err, out) => {
+            const text = String(out || '');
+            let model = null;
+            const m1 = text.match(/Chip is\s+([A-Za-z0-9_-]+)/i);
+            const m2 = text.match(/Detecting chip type\.\.\.\s*([A-Za-z0-9_-]+)/i);
+            if (m1) model = m1[1];
+            else if (m2) model = m2[1];
+            if (!model) {
+                cb(err || new Error('Chip nicht erkannt'), { model: null, raw: text });
+                return;
+            }
+            cb(null, { model, family: boardFamilyFromText(model), raw: text });
+        });
+    }
+
     _flashUsb(port, firmware, flashAddr, baud, cb) {
         if (this.flashRunning) { cb(new Error('Flash läuft bereits!')); return; }
         const fpath = path.join(FIRMWARE_DIR, path.basename(firmware));
@@ -569,41 +663,71 @@ class EspHub extends utils.Adapter {
             if (this.flashLog.length > 200) this.flashLog.pop();
         };
 
-        const addr  = flashAddr || '0x0';
-        const speed = baud      || '460800';
-        const esptool = this._getEsptoolCmd();
-        const cmd   = esptool + ' --port ' + port + ' --baud ' + speed +
-                      ' write_flash ' + addr + ' ' + fpath;
+        const doWrite = () => {
+            const addr  = flashAddr || '0x0';
+            const speed = baud      || '460800';
+            const esptool = this._getEsptoolCmd();
+            const cmd   = esptool + ' --port ' + port + ' --baud ' + speed +
+                          ' write_flash ' + addr + ' ' + fpath;
 
-        this._log('INFO', 'FLASH', 'Flash-Start: ' + cmd);
-        addLine('▶ ' + cmd, false);
+            this._log('INFO', 'FLASH', 'Flash-Start: ' + cmd);
+            addLine('▶ ' + cmd, false);
 
-        const { spawn } = require('child_process');
-        const parts = cmd.split(' ');
-        const proc  = spawn(parts[0], parts.slice(1), { stdio: ['ignore', 'pipe', 'pipe'] });
+            const { spawn } = require('child_process');
+            const parts = cmd.split(' ');
+            const proc  = spawn(parts[0], parts.slice(1), { stdio: ['ignore', 'pipe', 'pipe'] });
 
-        proc.stdout.on('data', d => {
-            String(d).split('\n').forEach(l => { if (l.trim()) addLine(l.trim(), false); });
-        });
-        proc.stderr.on('data', d => {
-            String(d).split('\n').forEach(l => { if (l.trim()) addLine(l.trim(), true); });
-        });
-        proc.on('close', code => {
-            this.flashRunning = false;
-            if (code === 0) {
-                addLine('✅ Flash erfolgreich abgeschlossen!', false);
-                this._log('INFO', 'FLASH', 'Flash erfolgreich: ' + firmware + ' → ' + port);
-            } else {
-                addLine('❌ Flash fehlgeschlagen (Exit ' + code + ')', true);
-                this._log('ERROR', 'FLASH', 'Flash fehlgeschlagen: Exit ' + code);
+            proc.stdout.on('data', d => {
+                String(d).split('\n').forEach(l => { if (l.trim()) addLine(l.trim(), false); });
+            });
+            proc.stderr.on('data', d => {
+                String(d).split('\n').forEach(l => { if (l.trim()) addLine(l.trim(), true); });
+            });
+            proc.on('close', code => {
+                this.flashRunning = false;
+                if (code === 0) {
+                    addLine('✅ Flash erfolgreich abgeschlossen!', false);
+                    this._log('INFO', 'FLASH', 'Flash erfolgreich: ' + firmware + ' → ' + port);
+                } else {
+                    addLine('❌ Flash fehlgeschlagen (Exit ' + code + ')', true);
+                    this._log('ERROR', 'FLASH', 'Flash fehlgeschlagen: Exit ' + code);
+                }
+                cb(code === 0 ? null : new Error('Exit ' + code));
+            });
+            proc.on('error', e => {
+                this.flashRunning = false;
+                addLine('❌ ' + e.message, true);
+                this._log('ERROR', 'FLASH', 'Flash-Fehler: ' + e.message);
+                cb(e);
+            });
+        };
+
+        // Chip erkennen und mit Firmware-Dateiname abgleichen (S3 ≠ D1 Mini)
+        addLine('▶ Chip erkennen vor Flash...', false);
+        this._detectChipOnPort(port, (err, info) => {
+            if (err || !info || !info.model) {
+                this.flashRunning = false;
+                addLine('❌ Chip-Erkennung fehlgeschlagen — Flash abgebrochen (Sicherheit).', true);
+                addLine('Hinweis: RST/BOOT prüfen, richtigen USB-Port wählen.', true);
+                this._log('WARN', 'FLASH', 'Flash abgebrochen: Chip nicht erkannt');
+                cb(err || new Error('Chip nicht erkannt'));
+                return;
             }
-            cb(code === 0 ? null : new Error('Exit ' + code));
-        });
-        proc.on('error', e => {
-            this.flashRunning = false;
-            addLine('❌ ' + e.message, true);
-            this._log('ERROR', 'FLASH', 'Flash-Fehler: ' + e.message);
-            cb(e);
+            addLine('Chip: ' + info.model + (info.family ? ' → ' + info.family : ''), false);
+            const check = checkFwChipCompatible(firmware, info.model);
+            if (!check.ok) {
+                this.flashRunning = false;
+                addLine('❌ ' + check.error, true);
+                this._log('WARN', 'FLASH', check.error);
+                cb(new Error(check.error));
+                return;
+            }
+            if (check.fwFamily) {
+                addLine('✅ Firmware passt zum Chip (' + check.fwFamily + ')', false);
+            } else {
+                addLine('⚠ Firmware ohne Board-Kennung im Dateinamen — Kompatibilität nicht prüfbar.', true);
+            }
+            doWrite();
         });
     }
 
@@ -615,7 +739,12 @@ class EspHub extends utils.Adapter {
                 .filter(f => f.endsWith('.bin'))
                 .map(f => {
                     const s = fs.statSync(path.join(FIRMWARE_DIR, f));
-                    return { name: f, size: s.size, date: s.mtime.toISOString() };
+                    return {
+                        name: f,
+                        size: s.size,
+                        date: s.mtime.toISOString(),
+                        family: boardFamilyFromText(f)
+                    };
                 })
                 .sort((a, b) => b.date.localeCompare(a.date));
         } catch (e) { return []; }
@@ -862,14 +991,23 @@ class EspHub extends utils.Adapter {
             const mac      = sanitizeMac(data.mac || '');
             const firmware = path.basename(data.firmware || '');
             if (!mac || !firmware) { json({ ok: false, error: 'mac + firmware erforderlich' }); return; }
+            const device = this.devices[mac];
+            const chipModel = (device && device.chipModel) || '';
+            const check = checkFwChipCompatible(firmware, chipModel);
+            if (!check.ok) {
+                this._log('WARN', 'OTA', check.error + ' [' + mac + ']');
+                json({ ok: false, error: check.error });
+                return;
+            }
             // Use the IP the ESP actually connected to — falls back to config
-            const host   = (this.devices[mac] && this.devices[mac].serverIp)
+            const host   = (device && device.serverIp)
                          || this.config.adapterHost || '127.0.0.1';
             const port   = this.config.webPort || 8093;
             const otaUrl = 'http://' + host + ':' + port + '/firmware/' + encodeURIComponent(firmware);
             await this.setStateAsync('devices.' + mac + '.otaUrl', otaUrl, true).catch(() => {});
-            if (this.devices[mac]) this.devices[mac].otaUrl = otaUrl;
-            this._log('INFO', 'OTA', 'OTA geplant → ' + mac + ': ' + firmware);
+            if (device) device.otaUrl = otaUrl;
+            this._log('INFO', 'OTA', 'OTA geplant → ' + mac + ': ' + firmware +
+                (check.fwFamily ? ' [' + check.fwFamily + ']' : ''));
             json({ ok: true, url: otaUrl, info: 'Wird beim nächsten Heartbeat übertragen' });
             return;
         }
@@ -1749,6 +1887,7 @@ class EspHub extends utils.Adapter {
             '    <div class="upload-area" id="upload-area">',
             '      &#128190; <b>.bin</b> Datei hierher ziehen oder klicken',
             '    </div>',
+            '    <div style="margin-top:8px;font-size:12px;color:var(--muted)">Schema: <code>name.version.family.bin</code> — z.B. <code>myfw.1.0.0.esp32.bin</code> / <code>myfw.1.0.0.esp32s3.bin</code></div>',
             '    <input type="file" id="fw-input" accept=".bin" style="display:none">',
             '    <div id="fw-list" class="fw-list" style="margin-top:12px"></div>',
             '  </div>',
@@ -1931,8 +2070,30 @@ class EspHub extends utils.Adapter {
             '  var ef=document.getElementById("st-offline"); if(ef)ef.textContent=total-online;',
             '  if(!grid)return;',
             '  if(!total){grid.innerHTML=\'<div class="empty">&#128267; Noch keine ESP-Ger\\u00e4te registriert.<br><small>Starte die ESP-Firmware und konfiguriere den Adapter-Host.</small></div>\';return;}',
-            '  var fwOpts=\'<option value="">-- Firmware w\\u00e4hlen --</option>\';',
-            '  firmwares.forEach(function(f){fwOpts+=\'<option value="\'+esc(f.name)+\'">\'+esc(f.name)+\' (\'+fmtSize(f.size)+\')</option>\';});',
+            '  function chipFamily(model){',
+            '    var t=String(model||"").toLowerCase();',
+            '    if(/esp32[-_]?s3|esp32s3/.test(t))return "esp32s3";',
+            '    if(/esp32[-_]?s2|esp32s2/.test(t))return "esp32s2";',
+            '    if(/esp32[-_]?c6|esp32c6/.test(t))return "esp32c6";',
+            '    if(/esp32[-_]?c3|esp32c3/.test(t))return "esp32c3";',
+            '    if(/esp8266/.test(t))return "esp8266";',
+            '    if(/esp32/.test(t))return "esp32";',
+            '    return null;',
+            '  }',
+            '  function fwOptsForDevice(d){',
+            '    var fam=chipFamily(d.chipModel||d.hwType);',
+            '    var opts=\'<option value="">-- Firmware w\\u00e4hlen --</option>\';',
+            '    var n=0;',
+            '    firmwares.forEach(function(f){',
+            '      var ff=f.family||null;',
+            '      if(fam&&ff&&ff!==fam)return;',
+            '      n++;',
+            '      var tag=ff?(" ["+ff+"]"):"";',
+            '      opts+=\'<option value="\'+esc(f.name)+\'">\'+esc(f.name)+tag+\' (\'+fmtSize(f.size)+\')</option>\';',
+            '    });',
+            '    if(fam&&n===0)opts+=\'<option value="" disabled>Keine passende Firmware f\\u00fcr \'+esc(fam)+\'</option>\';',
+            '    return opts;',
+            '  }',
             '  var h="";',
             '  devices.forEach(function(d){',
             '    var cls=d.online?"is-online":"is-offline";',
@@ -1975,9 +2136,9 @@ class EspHub extends utils.Adapter {
             '    });',
             '    pinH+=\'</div></div>\';',
             '    h+=pinH;',
-            '    // Actions row 1: OTA',
+            '    // Actions row 1: OTA (nur passende Chip-Familie)',
             '    h+=\'<div class="dc-actions" style="margin-top:10px;border-top:1px solid var(--border);padding-top:8px">\';',
-            '    h+=\'<select class="fw-sel" data-mac="\'+esc(d.mac)+\'">\'+fwOpts+\'</select>\';',
+            '    h+=\'<select class="fw-sel" data-mac="\'+esc(d.mac)+\'">\'+fwOptsForDevice(d)+\'</select>\';',
             '    h+=\'<button class="btn btn-sm btn-green" data-mac="\'+esc(d.mac)+\'" onclick="otaPush(this.dataset.mac)">OTA</button>\';',
             '    h+=\'</div>\';',
             '    // Actions row 2: Pinout, Rename, Delete',
@@ -1999,6 +2160,8 @@ class EspHub extends utils.Adapter {
             '  firmwares.forEach(function(f){',
             '    h+=\'<div class="fw-item">\';',
             '    h+=\'<span class="fw-name">&#128190; \'+esc(f.name)+\'</span>\';',
+            '    if(f.family)h+=\'<span class="badge badge-blue">\'+esc(f.family)+\'</span>\';',
+            '    else h+=\'<span class="badge badge-yellow">?</span>\';',
             '    h+=\'<span class="fw-size">\'+fmtSize(f.size)+\'</span>\';',
             '    h+=\'<a href="/firmware/\'+encodeURIComponent(f.name)+\'" class="btn btn-sm" style="background:var(--bg3)">&#11015;</a>\';',
             '    h+=\'<button class="btn btn-sm btn-red" data-name="\'+esc(f.name)+\'" onclick="delFirmware(this.dataset.name)">&#128465;</button>\';',
@@ -2173,7 +2336,10 @@ class EspHub extends utils.Adapter {
             '    var sel=document.getElementById("fl-fw");',
             '    var cur=sel.value;',
             '    sel.innerHTML=\'<option value="">-- Firmware ausw\\u00e4hlen --</option>\';',
-            '    list.forEach(function(f){sel.innerHTML+=\'<option value="\'+esc(f.name)+\'">\'+esc(f.name)+\' (\'+fmtSize(f.size)+\')</option>\';});',
+            '    list.forEach(function(f){',
+            '      var tag=f.family?(" ["+f.family+"]"):" [?]";',
+            '      sel.innerHTML+=\'<option value="\'+esc(f.name)+\'">\'+esc(f.name)+tag+\' (\'+fmtSize(f.size)+\')</option>\';',
+            '    });',
             '    if(cur)sel.value=cur;',
             '  }).catch(function(){});',
             '}',

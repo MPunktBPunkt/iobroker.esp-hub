@@ -1,8 +1,12 @@
 {
   "common": {
     "name": "esp-hub",
-    "version": "0.5.2",
+    "version": "0.5.3",
     "news": {
+      "0.5.3": {
+        "en": "Safety: refuse flashing firmware onto wrong chip family (e.g. esp32s3.bin on D1 Mini); unified firmware naming name.version.family.bin",
+        "de": "Sicherheit: Flash/OTA nur bei passender Chip-Familie (z.B. kein esp32s3.bin auf D1 Mini); einheitliche Firmware-Namen name.version.family.bin"
+      },
       "0.5.2": {
         "en": "Fix: always configure Espressif/ESP8266 board URLs so chip variants can be installed; restore missing chips via Web-UI; closer to official adapter package layout",
         "de": "Fix: Espressif/ESP8266 Board-URLs werden immer gesetzt, damit Chip-Varianten installierbar sind; Fehlende Chips per Web-UI wiederherstellen; naeher am offiziellen Adapter-Layout"
@@ -78,10 +82,6 @@
       "0.3.1": {
         "en": "New: Categorized library manager with 20+ libraries (Display, Sensors, LED, Energy...)",
         "de": "Neu: Kategorisierter Bibliotheks-Manager mit 20+ Bibliotheken (Display, Sensoren, LED, Energie...)"
-      },
-      "0.3.0": {
-        "en": "New: Library install button (WiFiManager + ArduinoJson), ANSI stripping in compile output",
-        "de": "Neu: Bibliotheken-Button (WiFiManager + ArduinoJson), ANSI-Codes aus Compiler-Ausgabe entfernt"
       }
     },
     "title": "ESP-Hub",
