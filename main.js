@@ -761,7 +761,8 @@ class EspHub extends utils.Adapter {
         const add = (p) => {
             if (!p || found.indexOf(p) >= 0) return;
             try {
-                if (fs.existsSync(p)) found.push(p);
+                // Only real serial char devices (LXC optional binds can leave empty placeholder files)
+                if (fs.existsSync(p) && fs.statSync(p).isCharacterDevice()) found.push(p);
             } catch (e) { /* ignore */ }
         };
         try {
