@@ -30,7 +30,7 @@ Boards, mit denen die ESP-Hub-Familie entwickelt und getestet wird:
 |:---:|:---:|
 | <img src="docs/hardware/esp32-d1-mini-top.jpg" width="340" alt="ESP32 D1 Mini – Oberseite"> | <img src="docs/hardware/esp32-d1-mini-bottom.jpg" width="340" alt="ESP32 D1 Mini – Unterseite"> |
 
-Standard für `esp-hub-base`, [esp32.MeterMaster](https://github.com/MPunktBPunkt/esp32.MeterMaster), `io-control`, `communicator` u. a.
+Standard für `esp-hub-base`, [esp32.MeterMaster](https://github.com/MPunktBPunkt/esp32.MeterMaster), `io-control`, `communicator`, [esp32.rfmonitor](https://github.com/MPunktBPunkt/esp32.rfmonitor) u. a.
 
 ### ESP32-S3
 
@@ -111,6 +111,20 @@ Einheitliches Schema (Chip-Familie am Ende):
 | `esp32s3` | `esp-hub-base.1.7.0.esp32s3.bin` |
 
 Kompilieren benennt die `.bin` automatisch so. Flash und OTA prüfen die Familie gegen den Chip — S3-Firmware lässt sich nicht auf einen klassischen ESP32 schreiben (und umgekehrt).
+
+### Gebündelte Firmwares (`firmware/`)
+
+| Projekt | Version | Dateien |
+|---------|---------|---------|
+| esp-hub-base | 1.7.0 | `esp-hub-base.1.7.0.esp32.bin` / `.esp32s3.bin` |
+| esp32.network | 1.6.6 | `network.1.6.6.esp32.bin` / `.esp32s3.bin` |
+| esp32.webradio | 2.4.0 | `webradio.2.4.0.esp32.bin` / `.esp32s3.bin` |
+| esp32.io-control | 1.6.1 | `io-control.1.6.1.esp32.bin` / `.esp32s3.bin` |
+| esp32.communicator | 1.8.0 | `communicator.1.8.0.esp32.bin` / `.esp32s3.bin` |
+| esp32.MeterMaster | 0.4.3 | `metermaster.0.4.3.esp32.bin` |
+| esp32.rfmonitor | 1.1.0 | `rfmonitor.1.1.0.esp32.bin` / `.esp32s3.bin` |
+
+Projektübersicht und Portal-SSIDs: [ESP32.esp-hub](https://github.com/MPunktBPunkt/ESP32.esp-hub).
 
 ### Eigene Firmware kompilieren
 
