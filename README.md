@@ -20,6 +20,36 @@
 
 ---
 
+## Referenz-Hardware
+
+Boards, mit denen die ESP-Hub-Familie entwickelt und getestet wird:
+
+### ESP32 D1 Mini (WEMOS)
+
+| Oben | Unten |
+|:---:|:---:|
+| <img src="docs/hardware/esp32-d1-mini-top.jpg" width="340" alt="ESP32 D1 Mini – Oberseite"> | <img src="docs/hardware/esp32-d1-mini-bottom.jpg" width="340" alt="ESP32 D1 Mini – Unterseite"> |
+
+Standard für `esp-hub-base`, [esp32.MeterMaster](https://github.com/MPunktBPunkt/esp32.MeterMaster), `io-control`, `communicator` u. a.
+
+### ESP32-S3
+
+| Oben | Unten |
+|:---:|:---:|
+| <img src="docs/hardware/esp32-s3-top.jpg" width="340" alt="ESP32-S3 – Oberseite"> | <img src="docs/hardware/esp32-s3-bottom.jpg" width="340" alt="ESP32-S3 – Unterseite"> |
+
+Für `.esp32s3`-Firmwares — USB-Port mit **COM**-Beschriftung, vor dem Flash kurz **RST**.
+
+### NodeMCU (ESP8266)
+
+| Oben | Unten |
+|:---:|:---:|
+| <img src="docs/hardware/nodemcu-top.jpg" width="340" alt="NodeMCU – Oberseite"> | <img src="docs/hardware/nodemcu-bottom.jpg" width="340" alt="NodeMCU – Unterseite"> |
+
+ESP8266-Unterstützung im Hub; abgeleitete Firmwares teils mit Anpassungen.
+
+---
+
 ## Quickstart
 
 ### Adapter installieren
