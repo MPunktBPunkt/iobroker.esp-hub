@@ -1,8 +1,12 @@
 {
   "common": {
     "name": "esp-hub",
-    "version": "0.5.9",
+    "version": "0.5.10",
     "news": {
+      "0.5.10": {
+        "en": "Bundled heartrate firmware 0.3.1 (HR-Relay on S3)",
+        "de": "Gebuendelte Heartrate-Firmware 0.3.1 (HR-Relay auf S3)"
+      },
       "0.5.9": {
         "en": "Sync device name from heartbeats (Web-UI rename); heart-rate session export API; bundled heartrate 0.2.16",
         "de": "Gerätename aus Heartbeats übernehmen (Web-UI-Umbenennung); Heart-Rate Session-Export API; Heartrate 0.2.16 gebündelt"
