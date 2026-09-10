@@ -123,6 +123,7 @@ Kompilieren benennt die `.bin` automatisch so. Flash und OTA prüfen die Familie
 | esp32.communicator | 1.8.0 | `communicator.1.8.0.esp32.bin` / `.esp32s3.bin` |
 | esp32.MeterMaster | 0.4.3 | `metermaster.0.4.3.esp32.bin` |
 | esp32.rfmonitor | 1.1.0 | `rfmonitor.1.1.0.esp32.bin` / `.esp32s3.bin` |
+| esp32.heartrate | 0.2.16 | `heartrate.0.2.16.esp32.bin` / `.esp32s3.bin` |
 
 Projektübersicht und Portal-SSIDs: [ESP32.esp-hub](https://github.com/MPunktBPunkt/ESP32.esp-hub).
 
@@ -211,7 +212,9 @@ esp-hub.0
     ├── lastSeen             number   Timestamp letzter Heartbeat
     ├── online               boolean  < 120s seit lastSeen
     ├── ios                  string   IO-Werte als JSON
-    └── otaUrl               string   OTA-URL (schreibbar)
+    ├── otaUrl               string   OTA-URL (schreibbar)
+    ├── lastSessionExport    string   Letzter HR-Session-Export (JSON)
+    └── lastSessionExportAt  number   Zeitpunkt letzter Session-Export
 ```
 
 ---
@@ -219,9 +222,10 @@ esp-hub.0
 ## ESP-API
 
 ```
-POST /api/register    Heartbeat {mac, name, hwType, version, ip, rssi, uptime, freeHeap, ios}
-GET  /api/ota/check   OTA-Abfrage ?mac=XXX → {update:bool, url?}
-GET  /firmware/*.bin  Firmware-Binary ausliefern
+POST /api/register         Heartbeat {mac, name, hwType, version, ip, rssi, uptime, freeHeap, ios}
+POST /api/session-export   Heart-Rate Session-Export (JSON-Body vom ESP) → lastSessionExport*
+GET  /api/ota/check        OTA-Abfrage ?mac=XXX → {update:bool, url?}
+GET  /firmware/*.bin       Firmware-Binary ausliefern
 ```
 
 ---
@@ -235,6 +239,11 @@ GNU General Public License v3.0 © MPunktBPunkt — siehe [LICENSE](LICENSE)
 ---
 
 ## Changelog
+
+### 0.5.9
+- Gerätename aus Heartbeat übernehmen (Web-UI-Umbenennung am ESP erreicht den Hub)
+- `POST /api/session-export` für esp32.heartrate (States `lastSessionExport` / `lastSessionExportAt`)
+- Gebündelte Firmware: heartrate **0.2.16** (esp32 / esp32s3)
 
 ### 0.5.8
 - WebRTC-Signaling (`POST/GET /api/webrtc`) + CORS für Communicator Browser-Anrufe

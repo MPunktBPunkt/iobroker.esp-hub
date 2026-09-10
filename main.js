@@ -214,6 +214,8 @@ class EspHub extends utils.Adapter {
             { id: 'online',      type: 'boolean', role: 'indicator.connected', write: false, def: false,   desc: 'Online' },
             { id: 'ios',         type: 'string',  role: 'json',                write: false, def: '{}',    desc: 'IO-Status als JSON' },
             { id: 'otaUrl',      type: 'string',  role: 'url',                 write: true,  def: '',      desc: 'OTA Firmware-URL (für nächsten Heartbeat)' },
+            { id: 'lastSessionExport', type: 'string', role: 'json', write: false, def: '', desc: 'Letzter Session-Export (JSON)' },
+            { id: 'lastSessionExportAt', type: 'number', role: 'value.time', write: false, def: 0, desc: 'Zeitpunkt letzter Session-Export' },
         ];
 
         for (const s of states) {
@@ -246,7 +248,13 @@ class EspHub extends utils.Adapter {
         if (localIp) d.serverIp = localIp;
 
         d.ip         = body.ip         || d.ip         || '';
-        d.name       = d.name          || body.name    || ('ESP-' + mac.slice(-4));
+        // Device is source of truth for the display name (Web-UI rename must reach Hub).
+        // Empty body.name keeps the previous value; never sticky-lock the first name forever.
+        if (typeof body.name === 'string' && body.name.trim().length > 0) {
+            d.name = body.name.trim();
+        } else {
+            d.name = d.name || ('ESP-' + mac.slice(-4));
+        }
         d.hwType     = body.hwType     || body.type    || d.hwType || 'esp32';
         d.chipModel  = body.chipModel  || d.chipModel  || '';
         d.version    = body.version    || d.version    || '0.0.0';
@@ -1128,6 +1136,29 @@ class EspHub extends utils.Adapter {
             // Use the actual local IP the ESP connected to — not the config
             const localIp = req.socket.localAddress.replace(/^::ffff:/, '');
             json(await this._handleRegister(data, localIp));
+            return;
+        }
+
+        // ── Heartrate session export (manual push from node) ──
+        if (url === '/api/session-export' && req.method === 'POST') {
+            const body = await readBody();
+            let data = {};
+            try { data = JSON.parse(body.toString()); } catch (e) {
+                json({ ok: false, error: 'invalid json' });
+                return;
+            }
+            const mac = sanitizeMac(data.mac || '');
+            if (!mac) { json({ ok: false, error: 'mac fehlt' }); return; }
+            if (!this.devices[mac]) this.devices[mac] = { mac };
+            await this._ensureDeviceStates(mac);
+            const payload = JSON.stringify(data);
+            const now = Date.now();
+            this.devices[mac].lastSessionExportAt = now;
+            await this.setStateAsync('devices.' + mac + '.lastSessionExport', payload, true).catch(() => {});
+            await this.setStateAsync('devices.' + mac + '.lastSessionExportAt', now, true).catch(() => {});
+            this._log('INFO', 'SESSION', 'Export von ' + mac + ' (' + payload.length + ' Bytes, series=' +
+                ((data.hrSeries && data.hrSeries.length) || 0) + ')');
+            json({ ok: true, bytes: payload.length, at: now });
             return;
         }
 
