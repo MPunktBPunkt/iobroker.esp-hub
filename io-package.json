@@ -1,8 +1,12 @@
 {
   "common": {
     "name": "esp-hub",
-    "version": "0.5.10",
+    "version": "0.5.11",
     "news": {
+      "0.5.11": {
+        "en": "Bundled ftmsprobe firmware 0.1.4 (esp32 / esp32s3)",
+        "de": "Gebuendelte ftmsprobe-Firmware 0.1.4 (esp32 / esp32s3)"
+      },
       "0.5.10": {
         "en": "Bundled heartrate firmware 0.3.1 (HR-Relay on S3)",
         "de": "Gebuendelte Heartrate-Firmware 0.3.1 (HR-Relay auf S3)"
