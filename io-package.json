@@ -82,18 +82,6 @@
       "0.4.2": {
         "en": "Fix: OTA URL uses actual server IP from ESP heartbeat connection (not adapterHost config)",
         "de": "Fix: OTA-URL nutzt echte Server-IP aus ESP-Heartbeat-Verbindung (nicht adapterHost-Config)"
-      },
-      "0.4.1": {
-        "en": "Bugfix: stray semicolon in device card JS (SyntaxError line 542)",
-        "de": "Bugfix: ueberzähliges Semikolon in Gerätekarte JS (SyntaxError Zeile 542)"
-      },
-      "0.4.0": {
-        "en": "New: chipModel + freeSketch in heartbeat and device cards, pinout panel, fixed buttons",
-        "de": "Neu: chipModel + freeSketch im Heartbeat und Geraetekarten, Pinout-Panel, Buttons repariert"
-      },
-      "0.3.6": {
-        "en": "Fix: min_spiffs partition for ESP32-S3 and D1 Mini (reduces flash usage from 89% to ~57%), ESP32-S3 USB hint",
-        "de": "Fix: min_spiffs Partition fuer ESP32-S3 und D1 Mini (Flash-Auslastung von 89% auf ~57%), ESP32-S3 USB-Hinweis"
       }
     },
     "title": "ESP-Hub",
