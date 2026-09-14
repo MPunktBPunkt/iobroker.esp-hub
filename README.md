@@ -123,7 +123,7 @@ Kompilieren benennt die `.bin` automatisch so. Flash und OTA prüfen die Familie
 | esp32.communicator | 1.8.0 | `communicator.1.8.0.esp32.bin` / `.esp32s3.bin` |
 | esp32.MeterMaster | 0.4.3 | `metermaster.0.4.3.esp32.bin` |
 | esp32.rfmonitor | 1.1.0 | `rfmonitor.1.1.0.esp32.bin` / `.esp32s3.bin` |
-| esp32.heartrate | 0.3.1 | `heartrate.0.3.1.esp32.bin` / `.esp32s3.bin` |
+| esp32.heartrate | 0.3.2 | `heartrate.0.3.2.esp32.bin` / `.esp32s3.bin` |
 | esp32.ftmsprobe | 0.1.4 | `ftmsprobe.0.1.4.esp32.bin` / `.esp32s3.bin` |
 
 Projektübersicht und Portal-SSIDs: [ESP32.esp-hub](https://github.com/MPunktBPunkt/ESP32.esp-hub).
@@ -240,6 +240,9 @@ GNU General Public License v3.0 © MPunktBPunkt — siehe [LICENSE](LICENSE)
 ---
 
 ## Changelog
+
+### 0.5.12
+- Gebündelte Firmware: heartrate **0.3.2** (Advertising bleibt für 2. Client nach Ergo-Connect)
 
 ### 0.5.11
 - Gebündelte Firmware: ftmsprobe **0.1.4** (esp32 / esp32s3)

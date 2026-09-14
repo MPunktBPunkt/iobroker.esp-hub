@@ -1,8 +1,12 @@
 {
   "common": {
     "name": "esp-hub",
-    "version": "0.5.11",
+    "version": "0.5.12",
     "news": {
+      "0.5.12": {
+        "en": "Bundled heartrate firmware 0.3.2 (keep advertising for 2nd client after ergo connects)",
+        "de": "Gebuendelte Heartrate-Firmware 0.3.2 (Advertising fuer 2. Client nach Ergo-Connect bleibt aktiv)"
+      },
       "0.5.11": {
         "en": "Bundled ftmsprobe firmware 0.1.4 (esp32 / esp32s3)",
         "de": "Gebuendelte ftmsprobe-Firmware 0.1.4 (esp32 / esp32s3)"
@@ -78,10 +82,6 @@
       "0.4.3": {
         "en": "Bugfix: FQBN with partition params now passed as array args to spawn (not string split)",
         "de": "Bugfix: FQBN mit Partition-Parametern wird als Array an spawn uebergeben (nicht String-Split)"
-      },
-      "0.4.2": {
-        "en": "Fix: OTA URL uses actual server IP from ESP heartbeat connection (not adapterHost config)",
-        "de": "Fix: OTA-URL nutzt echte Server-IP aus ESP-Heartbeat-Verbindung (nicht adapterHost-Config)"
       }
     },
     "title": "ESP-Hub",
