@@ -125,6 +125,7 @@ Kompilieren benennt die `.bin` automatisch so. Flash und OTA prüfen die Familie
 | esp32.rfmonitor | 1.1.0 | `rfmonitor.1.1.0.esp32.bin` / `.esp32s3.bin` |
 | esp32.heartrate | 0.3.2 | `heartrate.0.3.2.esp32.bin` / `.esp32s3.bin` |
 | esp32.ftmsprobe | 0.1.4 | `ftmsprobe.0.1.4.esp32.bin` / `.esp32s3.bin` |
+| esp32.pidrive | 0.4.2-dev | `pidrive.0.4.2-dev.usb.esp32s3.bin` (Flash @0x0) / `pidrive.0.4.2-dev.ota.esp32s3.bin` (OTA) |
 
 Projektübersicht und Portal-SSIDs: [ESP32.esp-hub](https://github.com/MPunktBPunkt/ESP32.esp-hub).
 
