@@ -7,13 +7,22 @@ const fs       = require('fs');
 const path     = require('path');
 const { exec } = require('child_process');
 
-const ADAPTER_VERSION = '0.5.8';
+const ADAPTER_VERSION = '0.5.13';
 const NODE_ONLINE_SEC = 120;
 const FIRMWARE_DIR    = '/tmp/iobroker-esphub-fw';
 const SKETCH_DIR      = '/tmp/iobroker-esphub-sketches';
+const PIO_WORK_DIR    = '/tmp/iobroker-esphub-pio';
 const ESP_BOARD_URLS  = [
     'https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json',
     'https://arduino.esp8266.com/stable/package_esp8266com_index.json'
+];
+const DEFAULT_ARDUINO_LIBS = ['WiFiManager', 'ArduinoJson'];
+const PIO_PATH_ROOTS = [
+    process.env.HOME || '/home/iobroker',
+    '/home/iobroker',
+    '/opt',
+    '/tmp/iobroker-esphub-pio',
+    PIO_WORK_DIR
 ];
 
 // ─── Helper ────────────────────────────────────────────────────────────────
@@ -70,6 +79,196 @@ function boardTagFromFqbn(fqbn) {
     return clean || 'unknown';
 }
 
+/** Sanitize firmware project name for {name}.{version}.{family}.bin */
+function normalizeFwName(name) {
+    let n = String(name || 'firmware').trim();
+    n = n.replace(/^esp32[._-]/i, '');
+    n = n.replace(/[^a-zA-Z0-9._-]+/g, '-').replace(/^-+|-+$/g, '');
+    return n || 'firmware';
+}
+
+/** Sanitize version segment (keep dots and -dev). */
+function normalizeFwVersion(ver) {
+    const v = String(ver || '').trim().replace(/^["']|["']$/g, '');
+    const m = v.match(/[0-9]+(?:\.[0-9A-Za-z_+-]+)*/);
+    return m ? m[0] : '0.0.0-dev';
+}
+
+/**
+ * Parse FW_VERSION from C/Arduino/PlatformIO text.
+ * Supports: #define FW_VERSION "1.2.3"  and  -DFW_VERSION=\"1.2.3\"
+ */
+function parseFwVersionFromText(text) {
+    const s = String(text || '');
+    let m = s.match(/#\s*define\s+FW_VERSION\s+"([^"]+)"/);
+    if (m) return normalizeFwVersion(m[1]);
+    m = s.match(/-DFW_VERSION=\\?"([^"\\]+)\\?"/);
+    if (m) return normalizeFwVersion(m[1]);
+    m = s.match(/-DFW_VERSION=([^\s"']+)/);
+    if (m) return normalizeFwVersion(m[1]);
+    return null;
+}
+
+function parseFwVersionFromIno(inoPath) {
+    try {
+        const text = fs.readFileSync(inoPath, 'utf8');
+        return parseFwVersionFromText(text) || '0.0.0-dev';
+    } catch (e) {
+        return '0.0.0-dev';
+    }
+}
+
+/** Build dest name: name.version[.extra].family.bin */
+function firmwareDestName(name, version, family, extra) {
+    const n = normalizeFwName(name);
+    const v = normalizeFwVersion(version);
+    const f = String(family || 'esp32').toLowerCase().replace(/[^a-z0-9]/g, '') || 'esp32';
+    const ex = extra ? String(extra).toLowerCase().replace(/[^a-z0-9_-]/g, '') : '';
+    return ex ? (n + '.' + v + '.' + ex + '.' + f + '.bin') : (n + '.' + v + '.' + f + '.bin');
+}
+
+/** Prefer application .ino.bin over bootloader/merged/partitions. */
+function pickArduinoAppBin(files) {
+    const list = (files || []).filter(f => f.endsWith('.bin'));
+    const app = list.find(f => /\.ino\.bin$/i.test(f) && !/bootloader|merged|partitions/i.test(f));
+    if (app) return app;
+    const noExtra = list.find(f => !/bootloader|merged|partitions/i.test(f));
+    return noExtra || list[0] || null;
+}
+
+/** Extra segment from PlatformIO env name (usb / ota). */
+function envExtraSegment(envName) {
+    const e = String(envName || '').toLowerCase();
+    if (/\busb\b|_usb|usb-/.test(e) || e.endsWith('usb') || e.includes('.usb')) return 'usb';
+    if (/\bota\b|_ota|ota-/.test(e) || e.endsWith('ota') || e.includes('.ota')) return 'ota';
+    if (e.includes('usb')) return 'usb';
+    if (e.includes('ota')) return 'ota';
+    return '';
+}
+
+function isAllowedPioPath(absPath) {
+    let resolved;
+    try { resolved = fs.realpathSync(absPath); } catch (e) {
+        resolved = path.resolve(absPath);
+    }
+    const roots = PIO_PATH_ROOTS.map(r => {
+        try { return fs.realpathSync(r); } catch (e) { return path.resolve(r); }
+    });
+    return roots.some(root => resolved === root || resolved.startsWith(root + path.sep));
+}
+
+/**
+ * Parse public GitHub URL → { cloneUrl, ref, subdir }.
+ * Accepts https://github.com/org/repo[/tree/branch[/subdir]]
+ */
+function parseGitHubUrl(url) {
+    const raw = String(url || '').trim();
+    const m = raw.match(
+        /^https:\/\/github\.com\/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+?)(?:\.git)?(?:\/(?:tree|blob)\/([^/]+)(?:\/(.*))?)?(?:\/)?$/i
+    );
+    if (!m) return null;
+    const owner = m[1];
+    const repo  = m[2].replace(/\.git$/i, '');
+    const ref   = m[3] || 'HEAD';
+    let subdir  = (m[4] || '').replace(/\/+$/, '');
+    if (subdir.endsWith('platformio.ini')) {
+        subdir = path.posix.dirname(subdir);
+        if (subdir === '.') subdir = '';
+    }
+    return {
+        owner, repo, ref, subdir,
+        cloneUrl: 'https://github.com/' + owner + '/' + repo + '.git'
+    };
+}
+
+/**
+ * Minimal platformio.ini parser: returns { envs: { name: { board, build_flags, extends } }, defaultEnvs }
+ */
+function parsePlatformIoIni(iniText) {
+    const lines = String(iniText || '').split(/\r?\n/);
+    const sections = {};
+    let cur = null;
+    for (const line of lines) {
+        const t = line.trim();
+        if (!t || t.startsWith(';') || t.startsWith('#')) continue;
+        const sec = t.match(/^\[([^\]]+)\]$/);
+        if (sec) {
+            cur = sec[1];
+            if (!sections[cur]) sections[cur] = { _raw: [] };
+            continue;
+        }
+        if (!cur) continue;
+        sections[cur]._raw.push(line);
+        const kv = t.match(/^([A-Za-z0-9_]+)\s*=\s*(.*)$/);
+        if (!kv) continue;
+        const key = kv[1];
+        let val = kv[2].trim();
+        if (key === 'extends') {
+            sections[cur].extends = val.replace(/^:/, '').trim();
+        } else if (key === 'board') {
+            sections[cur].board = val;
+        } else if (key === 'default_envs') {
+            sections[cur].default_envs = val.split(',').map(s => s.trim()).filter(Boolean);
+        } else if (key === 'build_flags') {
+            sections[cur].build_flags = (sections[cur].build_flags || '') + '\n' + val;
+        }
+    }
+    // Multi-line build_flags: continuation lines starting with spaces already in _raw
+    Object.keys(sections).forEach(name => {
+        const raw = (sections[name]._raw || []).join('\n');
+        const flags = [];
+        let inFlags = false;
+        raw.split(/\r?\n/).forEach(l => {
+            if (/^\s*build_flags\s*=/.test(l)) {
+                inFlags = true;
+                flags.push(l.replace(/^\s*build_flags\s*=\s*/, ''));
+                return;
+            }
+            if (inFlags) {
+                if (/^\s+[^\s]/.test(l) || /^\s*$/.test(l)) {
+                    if (/^\s+[^\s]/.test(l)) flags.push(l.trim());
+                } else {
+                    inFlags = false;
+                }
+            }
+        });
+        if (flags.length) sections[name].build_flags = flags.join('\n');
+    });
+
+    const envs = {};
+    Object.keys(sections).forEach(name => {
+        if (!name.startsWith('env:')) return;
+        const envName = name.slice(4);
+        const resolve = (secName, depth) => {
+            if (depth > 8) return {};
+            const sec = sections[secName] || {};
+            let base = {};
+            if (sec.extends) {
+                const parent = sec.extends.startsWith('env:') ? sec.extends : ('env:' + sec.extends);
+                // also allow bare [env] common via "env"
+                const parentKey = sections[parent] ? parent : (sections[sec.extends] ? sec.extends : parent);
+                base = resolve(parentKey, depth + 1);
+            } else if (sections.env && secName !== 'env') {
+                base = resolve('env', depth + 1);
+            }
+            return {
+                board: sec.board || base.board || '',
+                build_flags: (base.build_flags || '') + '\n' + (sec.build_flags || '')
+            };
+        };
+        const resolved = resolve(name, 0);
+        envs[envName] = {
+            name: envName,
+            board: resolved.board || '',
+            family: boardFamilyFromText(resolved.board || envName) || 'esp32',
+            version: parseFwVersionFromText(resolved.build_flags) || '0.0.0-dev',
+            extra: envExtraSegment(envName)
+        };
+    });
+    const defaultEnvs = (sections.platformio && sections.platformio.default_envs) || Object.keys(envs).slice(0, 1);
+    return { envs, defaultEnvs };
+}
+
 /**
  * Refuse flashing S3 firmware onto classic ESP32 (and vice versa).
  * Unknown sides are allowed so custom filenames still work.
@@ -108,6 +307,7 @@ class EspHub extends utils.Adapter {
         this.compileLog       = [];
         this.compileRunning   = false;
         this.arduinoCliReady  = false;
+        this.platformIoReady  = false;
         this.serialLog        = [];   // Serial Monitor Ring-Buffer
         this.serialProc       = null; // laufender cat-Prozess
         this.serialPort       = '';   // aktuell geöffneter Port
@@ -142,11 +342,13 @@ class EspHub extends utils.Adapter {
         try {
             if (!fs.existsSync(FIRMWARE_DIR)) fs.mkdirSync(FIRMWARE_DIR, { recursive: true });
             if (!fs.existsSync(SKETCH_DIR))   fs.mkdirSync(SKETCH_DIR,   { recursive: true });
+            if (!fs.existsSync(PIO_WORK_DIR)) fs.mkdirSync(PIO_WORK_DIR, { recursive: true });
             this._copyBundledFirmwares();
             await this.setStateAsync('info.connection', true, true);
             await this._restoreDevices();
             this._installEsptool();
             this._installArduinoCli();
+            this._detectPlatformIo();
             this._startServer();
             this._log('INFO', 'SYSTEM', 'ESP-Hub v' + (this.pack.version || ADAPTER_VERSION) +
                 ' gestartet — Port ' + (this.config.webPort || 8093));
@@ -210,6 +412,8 @@ class EspHub extends utils.Adapter {
             { id: 'uptime',      type: 'number',  role: 'value',               write: false, def: 0,       desc: 'Uptime', unit: 's' },
             { id: 'freeHeap',    type: 'number',  role: 'value',               write: false, def: 0,       desc: 'Freier Heap', unit: 'Bytes' },
             { id: 'freeSketch',  type: 'number',  role: 'value',               write: false, def: 0,       desc: 'Freier Flash-Speicher', unit: 'Bytes' },
+            { id: 'freePsram',   type: 'number',  role: 'value',               write: false, def: 0,       desc: 'Freier PSRAM', unit: 'Bytes' },
+            { id: 'psramSize',   type: 'number',  role: 'value',               write: false, def: 0,       desc: 'PSRAM Gesamt', unit: 'Bytes' },
             { id: 'lastSeen',    type: 'number',  role: 'value.time',          write: false, def: 0,       desc: 'Letzter Heartbeat' },
             { id: 'online',      type: 'boolean', role: 'indicator.connected', write: false, def: false,   desc: 'Online' },
             { id: 'ios',         type: 'string',  role: 'json',                write: false, def: '{}',    desc: 'IO-Status als JSON' },
@@ -262,14 +466,19 @@ class EspHub extends utils.Adapter {
         d.uptime     = (typeof body.uptime   === 'number') ? body.uptime   : (d.uptime   || 0);
         d.freeHeap   = (typeof body.freeHeap === 'number') ? body.freeHeap : (d.freeHeap || 0);
         d.freeSketch = (typeof body.freeSketch=== 'number') ? body.freeSketch:(d.freeSketch||0);
+        d.freePsram  = (typeof body.freePsram === 'number') ? body.freePsram : (d.freePsram || 0);
+        d.psramSize  = (typeof body.psramSize === 'number') ? body.psramSize : (d.psramSize || 0);
         d.lastSeen = now;
         d.online   = true;
 
         const rawIos = (body.ios && typeof body.ios === 'object') ? body.ios : {};
         d.ios = JSON.stringify(rawIos);
 
-        // Create states on first seen
-        if (isNew) await this._ensureDeviceStates(mac);
+        // Einmal pro Session: neue States (z.B. freePsram) nach Hub-Upgrade nachziehen
+        if (isNew || !d._statesReady) {
+            await this._ensureDeviceStates(mac);
+            d._statesReady = true;
+        }
 
         // Write states
         const p = 'devices.' + mac + '.';
@@ -283,6 +492,8 @@ class EspHub extends utils.Adapter {
         await this.setStateAsync(p + 'uptime',     d.uptime,     true);
         await this.setStateAsync(p + 'freeHeap',   d.freeHeap,   true);
         await this.setStateAsync(p + 'freeSketch', d.freeSketch, true);
+        await this.setStateAsync(p + 'freePsram',  d.freePsram,  true);
+        await this.setStateAsync(p + 'psramSize',  d.psramSize,  true);
         await this.setStateAsync(p + 'lastSeen',   now,          true);
         await this.setStateAsync(p + 'online',     true,         true);
         await this.setStateAsync(p + 'ios',        d.ios,        true);
@@ -477,13 +688,44 @@ class EspHub extends utils.Adapter {
                 .map(d => {
                     const inoPath = path.join(SKETCH_DIR, d, d + '.ino');
                     const s = fs.statSync(inoPath);
-                    return { name: d, size: s.size, date: s.mtime.toISOString() };
+                    return {
+                        name: d,
+                        version: parseFwVersionFromIno(inoPath),
+                        size: s.size,
+                        date: s.mtime.toISOString()
+                    };
                 })
                 .sort((a, b) => b.date.localeCompare(a.date));
         } catch (e) { return []; }
     }
 
-    _compileSketch(sketchName, fqbn, cb) {
+    _addCompileLine(line, isErr) {
+        const entry = { ts: new Date().toISOString(), line, err: isErr || false };
+        this.compileLog.unshift(entry);
+        if (this.compileLog.length > 300) this.compileLog.pop();
+    }
+
+    /** Ensure base Arduino libs for Hub sketches (idempotent). */
+    _ensureArduinoBaseLibs(cli, addLine, cb) {
+        const { spawn } = require('child_process');
+        const cliParts = cli.split(' ');
+        const args = [...cliParts.slice(1), 'lib', 'install', ...DEFAULT_ARDUINO_LIBS];
+        addLine('▶ arduino-cli lib install ' + DEFAULT_ARDUINO_LIBS.join(' ') + ' (falls nötig)', false);
+        const proc = spawn(cliParts[0], args, { stdio: ['ignore', 'pipe', 'pipe'] });
+        proc.stdout.on('data', d => String(d).split('\n').forEach(l => {
+            const clean = l.replace(/\x1b\[[0-9;]*m/g, '').trim();
+            if (clean) addLine(clean, false);
+        }));
+        proc.stderr.on('data', d => String(d).split('\n').forEach(l => {
+            const clean = l.replace(/\x1b\[[0-9;]*m/g, '').trim();
+            if (clean) addLine(clean, false);
+        }));
+        proc.on('close', () => cb(null));
+        proc.on('error', e => cb(e));
+    }
+
+    _compileSketch(sketchName, fqbn, nameOverride, cb) {
+        if (typeof nameOverride === 'function') { cb = nameOverride; nameOverride = ''; }
         if (this.compileRunning) { cb(new Error('Kompilierung läuft bereits')); return; }
         const sketchPath = path.join(SKETCH_DIR, sketchName);
         if (!fs.existsSync(sketchPath)) { cb(new Error('Sketch nicht gefunden: ' + sketchName)); return; }
@@ -495,74 +737,300 @@ class EspHub extends utils.Adapter {
         const outDir = path.join(SKETCH_DIR, sketchName + '_build');
         if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
 
-        const addLine = (line, isErr) => {
-            const entry = { ts: new Date().toISOString(), line, err: isErr || false };
-            this.compileLog.unshift(entry);
-            if (this.compileLog.length > 300) this.compileLog.pop();
+        const addLine = (line, isErr) => this._addCompileLine(line, isErr);
+        const inoPath = path.join(sketchPath, sketchName + '.ino');
+        const version = parseFwVersionFromIno(inoPath);
+        const family  = boardTagFromFqbn(fqbn);
+        const fwName  = normalizeFwName(nameOverride || sketchName);
+        const destName = firmwareDestName(fwName, version, family);
+        addLine('ℹ Ziel: ' + destName + ' (Board → .' + family + '.bin)', false);
+
+        const runCompile = () => {
+            const cmd = cli + ' compile --fqbn ' + fqbn + ' --output-dir ' + outDir + ' ' + sketchPath;
+            addLine('▶ ' + cmd, false);
+            this._log('INFO', 'COMPILE', 'Starte Kompilierung: ' + sketchName + ' [' + fqbn + '] → ' + destName);
+
+            const { spawn } = require('child_process');
+            const cliParts = cli.split(' ');
+            const args = [
+                ...cliParts.slice(1),
+                'compile',
+                '--fqbn', fqbn,
+                '--output-dir', outDir,
+                sketchPath
+            ];
+            const proc = spawn(cliParts[0], args, { stdio: ['ignore', 'pipe', 'pipe'] });
+
+            proc.stdout.on('data', d => String(d).split('\n').forEach(l => {
+                const clean = l.replace(/\x1b\[[0-9;]*m/g, '').trim();
+                if (clean) addLine(clean, false);
+            }));
+            proc.stderr.on('data', d => String(d).split('\n').forEach(l => {
+                const clean = l.replace(/\x1b\[[0-9;]*m/g, '').trim();
+                if (clean) addLine(clean, clean.includes('error') || clean.includes('Error'));
+            }));
+
+            proc.on('close', code => {
+                this.compileRunning = false;
+                if (code === 0) {
+                    try {
+                        const files = fs.readdirSync(outDir);
+                        const binFile = pickArduinoAppBin(files);
+                        if (binFile) {
+                            const src = path.join(outDir, binFile);
+                            if (!fs.existsSync(FIRMWARE_DIR)) fs.mkdirSync(FIRMWARE_DIR, { recursive: true });
+                            const dest = path.join(FIRMWARE_DIR, destName);
+                            fs.copyFileSync(src, dest);
+                            addLine('✅ Kompilierung erfolgreich! → ' + destName + ' [' + family + ']', false);
+                            this._log('INFO', 'COMPILE', 'Kompilierung OK: ' + destName);
+                        } else {
+                            addLine('⚠️ Kompilierung OK aber keine App-.bin gefunden.', true);
+                        }
+                    } catch (e) {
+                        addLine('⚠️ Konnte .bin nicht kopieren: ' + e.message, true);
+                    }
+                    cb(null);
+                } else {
+                    addLine('❌ Kompilierung fehlgeschlagen (Exit ' + code + ')', true);
+                    this._log('ERROR', 'COMPILE', 'Kompilierung fehlgeschlagen: Exit ' + code);
+                    cb(new Error('Exit ' + code));
+                }
+                exec('rm -rf ' + JSON.stringify(outDir), err => {
+                    if (!err) this._log('DEBUG', 'COMPILE', 'Build-Verzeichnis bereinigt: ' + outDir);
+                });
+            });
+            proc.on('error', e => {
+                this.compileRunning = false;
+                addLine('❌ ' + e.message, true);
+                cb(e);
+            });
         };
 
-        const cmd = cli + ' compile --fqbn ' + fqbn + ' --output-dir ' + outDir + ' ' + sketchPath;
-        addLine('▶ ' + cmd, false);
-        this._log('INFO', 'COMPILE', 'Starte Kompilierung: ' + sketchName + ' [' + fqbn + ']');
+        this._ensureArduinoBaseLibs(cli, addLine, () => runCompile());
+    }
 
-        const { spawn } = require('child_process');
-        // Use array args to avoid shell splitting issues with FQBN parameters
-        const cliParts = cli.split(' ');
-        const args = [
-            ...cliParts.slice(1),
-            'compile',
-            '--fqbn', fqbn,
-            '--output-dir', outDir,
-            sketchPath
+    // ─── PlatformIO ──────────────────────────────────────────────────────
+
+    _getPlatformIoCmd() {
+        const home = process.env.HOME || '/home/iobroker';
+        const candidates = [
+            'pio',
+            'platformio',
+            home + '/.platformio/penv/bin/pio',
+            home + '/.local/bin/pio',
+            '/usr/local/bin/pio'
         ];
-        const proc = spawn(cliParts[0], args, { stdio: ['ignore', 'pipe', 'pipe'] });
+        for (const c of candidates) {
+            try {
+                require('child_process').execSync(c + ' --version 2>/dev/null', { timeout: 5000 });
+                return c;
+            } catch (e) { /* next */ }
+        }
+        return null;
+    }
 
-        proc.stdout.on('data', d => String(d).split('\n').forEach(l => {
-            const clean = l.replace(/\x1b\[[0-9;]*m/g, '').trim();
-            if (clean) addLine(clean, false);
-        }));
-        proc.stderr.on('data', d => String(d).split('\n').forEach(l => {
-            const clean = l.replace(/\x1b\[[0-9;]*m/g, '').trim();
-            if (clean) addLine(clean, clean.includes('error') || clean.includes('Error'));
-        }));
+    _detectPlatformIo() {
+        const cmd = this._getPlatformIoCmd();
+        this.platformIoReady = !!cmd;
+        if (cmd) this._log('INFO', 'COMPILE', 'platformio-cli: ' + cmd);
+        else this._log('INFO', 'COMPILE', 'platformio-cli nicht gefunden (optional für PIO-Builds)');
+    }
 
-        proc.on('close', code => {
-            this.compileRunning = false;
-            if (code === 0) {
-                // Find .bin and copy to FIRMWARE_DIR
-                try {
-                    const files = fs.readdirSync(outDir).filter(f => f.endsWith('.bin'));
-                    if (files.length > 0) {
-                        const src  = path.join(outDir, files[0]);
-                        const tag  = boardTagFromFqbn(fqbn);
-                        const destName = sketchName + '.' + tag + '.bin';
-                        const dest = path.join(FIRMWARE_DIR, destName);
-                        fs.copyFileSync(src, dest);
-                        addLine('✅ Kompilierung erfolgreich! → ' + destName + ' [' + (boardFamilyFromText(fqbn) || tag) + ']', false);
-                        this._log('INFO', 'COMPILE', 'Kompilierung OK: ' + destName);
-                    } else {
-                        addLine('⚠️ Kompilierung OK aber keine .bin Datei gefunden.', true);
-                    }
-                } catch (e) {
-                    addLine('⚠️ Konnte .bin nicht kopieren: ' + e.message, true);
-                }
-                cb(null);
-            } else {
-                addLine('❌ Kompilierung fehlgeschlagen (Exit ' + code + ')', true);
-                this._log('ERROR', 'COMPILE', 'Kompilierung fehlgeschlagen: Exit ' + code);
-                cb(new Error('Exit ' + code));
+    _installPlatformIo(cb) {
+        const self = this;
+        const addLine = (line, isErr) => self._addCompileLine(line, isErr);
+        self.compileLog = [];
+        self.compileRunning = true;
+        addLine('▶ PlatformIO installieren (pip/get-platformio)…', false);
+        const tryPip = 'python3 -m pip install --user -U platformio 2>&1';
+        exec(tryPip, { timeout: 300000 }, (err, out) => {
+            (out || '').split('\n').forEach(l => { if (l.trim()) addLine(l.trim(), false); });
+            self._detectPlatformIo();
+            if (self.platformIoReady) {
+                addLine('✅ PlatformIO bereit: ' + self._getPlatformIoCmd(), false);
+                self.compileRunning = false;
+                if (cb) cb(null);
+                return;
             }
-            // Always clean up build directory (can be 50-200MB!)
-            exec('rm -rf ' + outDir, err => {
-                if (!err) {
-                    this._log('DEBUG', 'COMPILE', 'Build-Verzeichnis bereinigt: ' + outDir);
+            addLine('▶ Fallback: get-platformio.py …', false);
+            const script =
+                'curl -fsSL https://raw.githubusercontent.com/platformio/platformio-core-installer/master/get-platformio.py -o /tmp/get-platformio.py' +
+                ' && python3 /tmp/get-platformio.py 2>&1';
+            exec(script, { timeout: 600000 }, (err2, out2) => {
+                (out2 || '').split('\n').forEach(l => { if (l.trim()) addLine(l.trim(), false); });
+                self._detectPlatformIo();
+                self.compileRunning = false;
+                if (self.platformIoReady) {
+                    addLine('✅ PlatformIO bereit: ' + self._getPlatformIoCmd(), false);
+                    if (cb) cb(null);
+                } else {
+                    addLine('❌ PlatformIO-Installation fehlgeschlagen', true);
+                    if (cb) cb(new Error('platformio install failed'));
                 }
             });
         });
-        proc.on('error', e => {
-            this.compileRunning = false;
-            addLine('❌ ' + e.message, true);
-            cb(e);
+    }
+
+    _resolvePioProjectDir(opts, cb) {
+        const addLine = (line, isErr) => this._addCompileLine(line, isErr);
+        if (opts.path) {
+            const abs = path.resolve(String(opts.path));
+            if (!isAllowedPioPath(abs)) {
+                return cb(new Error('Pfad nicht erlaubt (Allowlist: HOME, /opt, /home/iobroker, ' + PIO_WORK_DIR + ')'));
+            }
+            const ini = path.join(abs, 'platformio.ini');
+            if (!fs.existsSync(ini)) return cb(new Error('platformio.ini nicht gefunden in ' + abs));
+            return cb(null, abs);
+        }
+        if (opts.github) {
+            const gh = parseGitHubUrl(opts.github);
+            if (!gh) return cb(new Error('Ungültige GitHub-URL (nur https://github.com/org/repo[...])'));
+            if (!fs.existsSync(PIO_WORK_DIR)) fs.mkdirSync(PIO_WORK_DIR, { recursive: true });
+            const dest = path.join(PIO_WORK_DIR, gh.owner + '-' + gh.repo);
+            const doClone = (next) => {
+                if (fs.existsSync(path.join(dest, '.git'))) {
+                    addLine('▶ git fetch/reset ' + gh.cloneUrl, false);
+                    exec('git -C ' + JSON.stringify(dest) + ' fetch --depth 1 origin ' + JSON.stringify(gh.ref) +
+                         ' && git -C ' + JSON.stringify(dest) + ' checkout -f FETCH_HEAD',
+                        { timeout: 180000 }, (err, out) => {
+                            if (out) String(out).split('\n').forEach(l => { if (l.trim()) addLine(l.trim(), false); });
+                            if (err) addLine('⚠ git update: ' + err.message + ' — nutze vorhandenen Clone', true);
+                            next();
+                        });
+                } else {
+                    addLine('▶ git clone --depth 1 ' + gh.cloneUrl, false);
+                    const args = ['clone', '--depth', '1'];
+                    if (gh.ref && gh.ref !== 'HEAD') args.push('--branch', gh.ref);
+                    args.push(gh.cloneUrl, dest);
+                    const { spawn } = require('child_process');
+                    const proc = spawn('git', args, { stdio: ['ignore', 'pipe', 'pipe'] });
+                    proc.stdout.on('data', d => String(d).split('\n').forEach(l => { if (l.trim()) addLine(l.trim(), false); }));
+                    proc.stderr.on('data', d => String(d).split('\n').forEach(l => { if (l.trim()) addLine(l.trim(), false); }));
+                    proc.on('close', code => {
+                        if (code !== 0) return cb(new Error('git clone Exit ' + code));
+                        next();
+                    });
+                    proc.on('error', e => cb(e));
+                }
+            };
+            doClone(() => {
+                const proj = gh.subdir ? path.join(dest, gh.subdir) : dest;
+                if (!fs.existsSync(path.join(proj, 'platformio.ini'))) {
+                    return cb(new Error('platformio.ini nicht gefunden in ' + proj));
+                }
+                if (!isAllowedPioPath(proj)) return cb(new Error('Aufgelöster Pfad nicht erlaubt'));
+                cb(null, proj);
+            });
+            return;
+        }
+        cb(new Error('path oder github erforderlich'));
+    }
+
+    _listPioEnvs(projectDir) {
+        const iniPath = path.join(projectDir, 'platformio.ini');
+        const text = fs.readFileSync(iniPath, 'utf8');
+        const parsed = parsePlatformIoIni(text);
+        const nameHint = normalizeFwName(path.basename(projectDir));
+        return {
+            projectDir,
+            nameHint,
+            defaultEnvs: parsed.defaultEnvs,
+            envs: Object.keys(parsed.envs).map(k => {
+                const e = parsed.envs[k];
+                return {
+                    name: e.name,
+                    board: e.board,
+                    family: e.family,
+                    version: e.version,
+                    extra: e.extra,
+                    destPreview: firmwareDestName(nameHint, e.version, e.family, e.extra)
+                };
+            })
+        };
+    }
+
+    _compilePlatformIo(opts, cb) {
+        if (this.compileRunning) { cb(new Error('Kompilierung läuft bereits')); return; }
+        const pio = this._getPlatformIoCmd();
+        if (!pio) { cb(new Error('platformio-cli nicht verfügbar')); return; }
+
+        this.compileRunning = true;
+        this.compileLog = [];
+        const addLine = (line, isErr) => this._addCompileLine(line, isErr);
+
+        this._resolvePioProjectDir(opts, (err, projectDir) => {
+            if (err) {
+                this.compileRunning = false;
+                addLine('❌ ' + err.message, true);
+                return cb(err);
+            }
+            let info;
+            try { info = this._listPioEnvs(projectDir); }
+            catch (e) {
+                this.compileRunning = false;
+                addLine('❌ platformio.ini: ' + e.message, true);
+                return cb(e);
+            }
+            const envName = String(opts.env || info.defaultEnvs[0] || '').trim();
+            if (!envName || !info.envs.find(e => e.name === envName)) {
+                this.compileRunning = false;
+                addLine('❌ Env ungültig. Verfügbar: ' + info.envs.map(e => e.name).join(', '), true);
+                return cb(new Error('env erforderlich'));
+            }
+            const envMeta = info.envs.find(e => e.name === envName);
+            const fwName  = normalizeFwName(opts.name || info.nameHint);
+            const version = normalizeFwVersion(opts.version || envMeta.version);
+            const family  = envMeta.family || 'esp32';
+            const extra   = envMeta.extra || '';
+            const destName = firmwareDestName(fwName, version, family, extra);
+            addLine('ℹ Projekt: ' + projectDir, false);
+            addLine('ℹ Env: ' + envName + ' board=' + (envMeta.board || '?') + ' → ' + destName, false);
+
+            const { spawn } = require('child_process');
+            const args = ['run', '-e', envName, '-d', projectDir];
+            addLine('▶ ' + pio + ' ' + args.join(' '), false);
+            this._log('INFO', 'COMPILE', 'PIO: ' + envName + ' → ' + destName);
+            const proc = spawn(pio, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+            proc.stdout.on('data', d => String(d).split('\n').forEach(l => {
+                const clean = l.replace(/\x1b\[[0-9;]*m/g, '').trim();
+                if (clean) addLine(clean, false);
+            }));
+            proc.stderr.on('data', d => String(d).split('\n').forEach(l => {
+                const clean = l.replace(/\x1b\[[0-9;]*m/g, '').trim();
+                if (clean) addLine(clean, /error|Error|FAILED/i.test(clean));
+            }));
+            proc.on('close', code => {
+                this.compileRunning = false;
+                if (code !== 0) {
+                    addLine('❌ PlatformIO Build fehlgeschlagen (Exit ' + code + ')', true);
+                    return cb(new Error('Exit ' + code));
+                }
+                try {
+                    const buildDir = path.join(projectDir, '.pio', 'build', envName);
+                    let src = path.join(buildDir, 'firmware.bin');
+                    if (!fs.existsSync(src)) {
+                        const bins = fs.existsSync(buildDir)
+                            ? fs.readdirSync(buildDir).filter(f => f.endsWith('.bin') && !/bootloader|partitions|merged/i.test(f))
+                            : [];
+                        if (!bins.length) throw new Error('firmware.bin nicht gefunden in ' + buildDir);
+                        src = path.join(buildDir, bins[0]);
+                    }
+                    if (!fs.existsSync(FIRMWARE_DIR)) fs.mkdirSync(FIRMWARE_DIR, { recursive: true });
+                    const dest = path.join(FIRMWARE_DIR, destName);
+                    fs.copyFileSync(src, dest);
+                    addLine('✅ PlatformIO OK! → ' + destName + ' [' + family + ']', false);
+                    this._log('INFO', 'COMPILE', 'PIO OK: ' + destName);
+                    cb(null);
+                } catch (e) {
+                    addLine('⚠️ Build OK, Bin-Kopie fehlgeschlagen: ' + e.message, true);
+                    cb(e);
+                }
+            });
+            proc.on('error', e => {
+                this.compileRunning = false;
+                addLine('❌ ' + e.message, true);
+                cb(e);
+            });
         });
     }
 
@@ -1201,6 +1669,7 @@ class EspHub extends utils.Adapter {
             const file  = parts.find(p => p.filename && p.filename.endsWith('.bin'));
             if (!file) { json({ ok: false, error: 'Keine .bin Datei gefunden' }); return; }
             const fname = path.basename(file.filename);
+            if (!fs.existsSync(FIRMWARE_DIR)) fs.mkdirSync(FIRMWARE_DIR, { recursive: true });
             fs.writeFileSync(path.join(FIRMWARE_DIR, fname), file.data);
             this._log('INFO', 'OTA', 'Firmware hochgeladen: ' + fname + ' (' + file.data.length + ' B)');
             json({ ok: true, name: fname, size: file.data.length });
@@ -1389,31 +1858,9 @@ class EspHub extends utils.Adapter {
             return;
         }
 
-        // ── Library install ──
+        // ── Library install (legacy API; Sketch-Compile installiert Basis-Libs selbst) ──
         if (url === '/api/lib-install' && req.method === 'POST') {
-            const body = await readBody();
-            let data = {};
-            try { data = JSON.parse(body.toString()); } catch (e) { /* ignore */ }
-            const libs = (data.libs || ['WiFiManager', 'ArduinoJson']);
-            const cli = this._getArduinoCliCmd();
-            if (!cli) { json({ ok: false, error: 'arduino-cli nicht verfügbar' }); return; }
-            const addLine = (line, isErr) => { this.compileLog.unshift({ ts: new Date().toISOString(), line, err: isErr || false }); };
-            this.compileLog = [];
-            this.compileRunning = true;
-            const cmd = cli + ' lib install ' + libs.map(l => '"' + l + '"').join(' ') + ' 2>&1';
-            addLine('▶ ' + cmd, false);
-            json({ ok: true, message: 'Bibliotheken werden installiert...' });
-            exec(cmd, { timeout: 120000 }, (err, out) => {
-                this.compileRunning = false;
-                (out || '').split('\n').forEach(l => { if (l.trim()) addLine(l.trim(), false); });
-                if (err) {
-                    addLine('❌ Fehler: ' + err.message, true);
-                    this._log('ERROR', 'COMPILE', 'Lib-Install fehlgeschlagen');
-                } else {
-                    addLine('✅ Bibliotheken installiert: ' + libs.join(', '), false);
-                    this._log('INFO', 'COMPILE', 'Bibliotheken installiert: ' + libs.join(', '));
-                }
-            });
+            json({ ok: false, error: 'Bibliotheken-UI entfernt. Sketch-Compile installiert WiFiManager+ArduinoJson automatisch; PlatformIO nutzt lib_deps.' });
             return;
         }
 
@@ -1454,6 +1901,16 @@ class EspHub extends utils.Adapter {
                 results.push('arduino-cli Cache: ' + Math.round(cacheSize/1024/1024) + ' MB');
             }
 
+            // Always: PlatformIO work clones (keep allowlisted; safe to wipe)
+            if (fs.existsSync(PIO_WORK_DIR)) {
+                const pioSize = getSize(PIO_WORK_DIR);
+                exec('rm -rf ' + JSON.stringify(PIO_WORK_DIR), () => {
+                    try { fs.mkdirSync(PIO_WORK_DIR, { recursive: true }); } catch (e2) { /* ignore */ }
+                });
+                freed += pioSize;
+                results.push('PlatformIO Temp: ' + Math.round(pioSize/1024/1024) + ' MB');
+            }
+
             // If 'all': also remove sketch source dirs
             if (what === 'all') {
                 try {
@@ -1490,16 +1947,23 @@ class EspHub extends utils.Adapter {
             } catch(e) { /* ignore */ }
             const arduinoCache = (process.env.HOME || '/home/iobroker') + '/.cache/arduino/sketches';
             const cache = usage(arduinoCache);
+            const pio = usage(PIO_WORK_DIR);
             json({ sketches: Math.round(sketches/1024/1024),
                    firmware: Math.round(firmware/1024/1024),
                    builds:   Math.round(builds/1024/1024),
-                   cache:    Math.round(cache/1024/1024) });
+                   cache:    Math.round(cache/1024/1024),
+                   pio:      Math.round(pio/1024/1024) });
             return;
         }
 
         // ── Arduino-CLI Status ──
         if (url === '/api/arduino-status') {
-            json({ ready: this.arduinoCliReady, cmd: this._getArduinoCliCmd() || '' });
+            json({
+                ready: this.arduinoCliReady,
+                cmd: this._getArduinoCliCmd() || '',
+                platformioReady: this.platformIoReady,
+                platformioCmd: this._getPlatformIoCmd() || ''
+            });
             return;
         }
 
@@ -1693,20 +2157,105 @@ class EspHub extends utils.Adapter {
             return;
         }
 
-        // ── Compile ──
+        // ── Compile (Arduino sketch) ──
         if (url === '/api/compile' && req.method === 'POST') {
             const body = await readBody();
             let data = {};
             try { data = JSON.parse(body.toString()); } catch (e) { /* ignore */ }
             const sketchName = (data.sketch || '').replace(/[^a-zA-Z0-9_-]/g, '');
             const fqbn       = (data.fqbn   || '').replace(/[^a-zA-Z0-9:_.=,-]/g, '');
+            const nameOv     = (data.name   || '').replace(/[^a-zA-Z0-9._-]/g, '');
             if (!sketchName) { json({ ok: false, error: 'sketch erforderlich' }); return; }
             if (!fqbn)       { json({ ok: false, error: 'fqbn erforderlich' }); return; }
             if (!this.arduinoCliReady) { json({ ok: false, error: 'arduino-cli nicht verfügbar' }); return; }
             if (this.compileRunning)   { json({ ok: false, error: 'Kompilierung läuft bereits' }); return; }
+            const inoPath = path.join(SKETCH_DIR, sketchName, sketchName + '.ino');
+            const preview = firmwareDestName(nameOv || sketchName, parseFwVersionFromIno(inoPath), boardTagFromFqbn(fqbn));
             this.compileLog = [];
-            json({ ok: true, message: 'Kompilierung gestartet...' });
-            this._compileSketch(sketchName, fqbn, () => {});
+            json({ ok: true, message: 'Kompilierung gestartet...', destName: preview });
+            this._compileSketch(sketchName, fqbn, nameOv, () => {});
+            return;
+        }
+
+        // ── Sketch name preview ──
+        if (url === '/api/compile-preview') {
+            const sketchName = (qs.sketch || '').replace(/[^a-zA-Z0-9_-]/g, '');
+            const fqbn       = (qs.fqbn   || '').replace(/[^a-zA-Z0-9:_.=,-]/g, '');
+            const nameOv     = (qs.name   || '').replace(/[^a-zA-Z0-9._-]/g, '');
+            if (!sketchName || !fqbn) { json({ ok: false, error: 'sketch + fqbn' }); return; }
+            const inoPath = path.join(SKETCH_DIR, sketchName, sketchName + '.ino');
+            const version = parseFwVersionFromIno(inoPath);
+            const family  = boardTagFromFqbn(fqbn);
+            const destName = firmwareDestName(nameOv || sketchName, version, family);
+            json({ ok: true, name: normalizeFwName(nameOv || sketchName), version, family, destName });
+            return;
+        }
+
+        // ── PlatformIO status / install ──
+        if (url === '/api/pio-status') {
+            this._detectPlatformIo();
+            json({ ready: this.platformIoReady, cmd: this._getPlatformIoCmd() || '' });
+            return;
+        }
+        if (url === '/api/pio-install' && req.method === 'POST') {
+            if (this.compileRunning) { json({ ok: false, error: 'Kompilierung läuft bereits' }); return; }
+            json({ ok: true, message: 'PlatformIO-Installation gestartet...' });
+            this._installPlatformIo(() => {});
+            return;
+        }
+
+        // ── PlatformIO envs (path or github) ──
+        if (url === '/api/pio-envs' && req.method === 'POST') {
+            const body = await readBody();
+            let data = {};
+            try { data = JSON.parse(body.toString()); } catch (e) { /* ignore */ }
+            if (this.compileRunning) { json({ ok: false, error: 'Kompilierung läuft — bitte warten' }); return; }
+            // Sync resolve for local path; github may clone — use async helper without stealing compile lock for path-only
+            if (data.path) {
+                const abs = path.resolve(String(data.path));
+                if (!isAllowedPioPath(abs)) { json({ ok: false, error: 'Pfad nicht erlaubt' }); return; }
+                if (!fs.existsSync(path.join(abs, 'platformio.ini'))) {
+                    json({ ok: false, error: 'platformio.ini nicht gefunden' }); return;
+                }
+                try { json({ ok: true, ...this._listPioEnvs(abs) }); }
+                catch (e) { json({ ok: false, error: e.message }); }
+                return;
+            }
+            if (data.github) {
+                this.compileLog = [];
+                this.compileRunning = true;
+                this._resolvePioProjectDir({ github: data.github }, (err, projectDir) => {
+                    this.compileRunning = false;
+                    if (err) { json({ ok: false, error: err.message }); return; }
+                    try { json({ ok: true, ...this._listPioEnvs(projectDir) }); }
+                    catch (e) { json({ ok: false, error: e.message }); }
+                });
+                return;
+            }
+            json({ ok: false, error: 'path oder github erforderlich' });
+            return;
+        }
+
+        // ── PlatformIO compile ──
+        if (url === '/api/pio-compile' && req.method === 'POST') {
+            const body = await readBody();
+            let data = {};
+            try { data = JSON.parse(body.toString()); } catch (e) { /* ignore */ }
+            if (!this.platformIoReady && !this._getPlatformIoCmd()) {
+                json({ ok: false, error: 'platformio-cli nicht verfügbar — bitte installieren' }); return;
+            }
+            this.platformIoReady = true;
+            if (this.compileRunning) { json({ ok: false, error: 'Kompilierung läuft bereits' }); return; }
+            if (!data.path && !data.github) { json({ ok: false, error: 'path oder github erforderlich' }); return; }
+            if (!data.env) { json({ ok: false, error: 'env erforderlich' }); return; }
+            json({ ok: true, message: 'PlatformIO-Build gestartet...' });
+            this._compilePlatformIo({
+                path: data.path || '',
+                github: data.github || '',
+                env: String(data.env || '').replace(/[^a-zA-Z0-9_-]/g, ''),
+                name: (data.name || '').replace(/[^a-zA-Z0-9._-]/g, ''),
+                version: (data.version || '').replace(/[^a-zA-Z0-9._+-]/g, '')
+            }, () => {});
             return;
         }
 
@@ -1848,11 +2397,6 @@ class EspHub extends utils.Adapter {
             '.chip-item{background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:8px 10px;display:flex;justify-content:space-between;align-items:center}',
             '.chip-item label{display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px}',
             '.chip-size{font-size:11px;color:var(--muted);font-family:var(--mono);white-space:nowrap}',
-            '.lib-group{background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:10px 12px}',
-            '.lib-group-title{font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px}',
-            '.lib-item{display:flex;align-items:center;gap:6px;padding:3px 0;cursor:pointer;font-size:13px;user-select:none}',
-            '.lib-item input{accent-color:var(--accent);cursor:pointer;flex-shrink:0}',
-            '.lib-desc{color:var(--dim);font-size:11px;margin-left:auto}',
         ].join('\n');
 
         const BODY = [
@@ -2026,107 +2570,93 @@ class EspHub extends utils.Adapter {
             '    <div id="clean-result" style="margin-top:10px;font-size:12px;color:var(--green)"></div>',
             '  </div>',
             '  <div class="card">',
-            '    <h3>&#128218; Bibliotheken installieren</h3>',
-            '    <div id="lib-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:10px;margin-bottom:14px">',
-
-            // Grundlagen
-            '      <div class="lib-group">',
-            '        <div class="lib-group-title">Grundlagen</div>',
-            '        <label class="lib-item"><input type="checkbox" value="WiFiManager" checked> WiFiManager <span class="lib-desc">WLAN Captive Portal</span></label>',
-            '        <label class="lib-item"><input type="checkbox" value="ArduinoJson" checked> ArduinoJson <span class="lib-desc">JSON Parsing</span></label>',
-            '        <label class="lib-item"><input type="checkbox" value="PubSubClient"> PubSubClient <span class="lib-desc">MQTT Client</span></label>',
-            '        <label class="lib-item"><input type="checkbox" value="NTPClient"> NTPClient <span class="lib-desc">Zeit per NTP</span></label>',
-            '      </div>',
-
-            // Display
-            '      <div class="lib-group">',
-            '        <div class="lib-group-title">Display</div>',
-            '        <label class="lib-item"><input type="checkbox" value="Adafruit SSD1306"> Adafruit SSD1306 <span class="lib-desc">OLED 128x64</span></label>',
-            '        <label class="lib-item"><input type="checkbox" value="Adafruit GFX Library"> Adafruit GFX <span class="lib-desc">Grafik-Basis</span></label>',
-            '        <label class="lib-item"><input type="checkbox" value="U8g2"> U8g2 <span class="lib-desc">Universal Display</span></label>',
-            '        <label class="lib-item"><input type="checkbox" value="TFT_eSPI"> TFT_eSPI <span class="lib-desc">TFT/LCD Displays</span></label>',
-            '        <label class="lib-item"><input type="checkbox" value="LiquidCrystal I2C"> LiquidCrystal I2C <span class="lib-desc">LCD 16x2 I2C</span></label>',
-            '      </div>',
-
-            // Sensoren
-            '      <div class="lib-group">',
-            '        <div class="lib-group-title">Sensoren</div>',
-            '        <label class="lib-item"><input type="checkbox" value="DHT sensor library"> DHT Sensor <span class="lib-desc">DHT11/22 Temp+Hum</span></label>',
-            '        <label class="lib-item"><input type="checkbox" value="OneWire"> OneWire <span class="lib-desc">1-Wire Bus</span></label>',
-            '        <label class="lib-item"><input type="checkbox" value="DallasTemperature"> DallasTemperature <span class="lib-desc">DS18B20 Sensor</span></label>',
-            '        <label class="lib-item"><input type="checkbox" value="Adafruit BME280 Library"> Adafruit BME280 <span class="lib-desc">Temp/Hum/Druck</span></label>',
-            '        <label class="lib-item"><input type="checkbox" value="Adafruit BMP280 Library"> Adafruit BMP280 <span class="lib-desc">Temp/Druck</span></label>',
-            '        <label class="lib-item"><input type="checkbox" value="Adafruit SHTC3 Library"> Adafruit SHTC3 <span class="lib-desc">Temp/Hum I2C</span></label>',
-            '      </div>',
-
-            // LED & Aktor
-            '      <div class="lib-group">',
-            '        <div class="lib-group-title">LED &amp; Aktoren</div>',
-            '        <label class="lib-item"><input type="checkbox" value="FastLED"> FastLED <span class="lib-desc">WS2812 RGB-LEDs</span></label>',
-            '        <label class="lib-item"><input type="checkbox" value="Adafruit NeoPixel"> NeoPixel <span class="lib-desc">WS2812 (Adafruit)</span></label>',
-            '        <label class="lib-item"><input type="checkbox" value="Servo"> Servo <span class="lib-desc">Servomotor</span></label>',
-            '        <label class="lib-item"><input type="checkbox" value="AccelStepper"> AccelStepper <span class="lib-desc">Schrittmotor</span></label>',
-            '      </div>',
-
-            // Kommunikation
-            '      <div class="lib-group">',
-            '        <div class="lib-group-title">Kommunikation</div>',
-            '        <label class="lib-item"><input type="checkbox" value="IRremote"> IRremote <span class="lib-desc">IR Sender/Empf.</span></label>',
-            '        <label class="lib-item"><input type="checkbox" value="RadioHead"> RadioHead <span class="lib-desc">433MHz/NRF24</span></label>',
-            '        <label class="lib-item"><input type="checkbox" value="Modbus"> Modbus <span class="lib-desc">Modbus RTU/TCP</span></label>',
-            '      </div>',
-
-            // Strom & Energie
-            '      <div class="lib-group">',
-            '        <div class="lib-group-title">Energie &amp; Messtechnik</div>',
-            '        <label class="lib-item"><input type="checkbox" value="EmonLib"> EmonLib <span class="lib-desc">Stromverbrauch CT</span></label>',
-            '        <label class="lib-item"><input type="checkbox" value="ADS1X15"> ADS1X15 <span class="lib-desc">16-bit ADC I2C</span></label>',
-            '        <label class="lib-item"><input type="checkbox" value="HX711 Arduino Library"> HX711 <span class="lib-desc">Wägezelle</span></label>',
-            '        <label class="lib-item"><input type="checkbox" value="PZEM-004T-v3"> PZEM-004T <span class="lib-desc">Energiemessung</span></label>',
-            '      </div>',
-
+            '    <h3>&#128190; Arduino Sketch (.ino)</h3>',
+            '    <div style="font-size:12px;color:var(--muted);margin-bottom:10px">',
+            '      Ausgabe: <code>name.version.family.bin</code> — Version aus <code>FW_VERSION</code>, Family aus Board-Dropdown.',
+            '      Basis-Libs (WiFiManager, ArduinoJson) werden beim Compile automatisch sichergestellt. PlatformIO-Projekte: Card unten.',
             '    </div>',
-            '    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">',
-            '      <button class="btn btn-green" id="ac-libs-btn">&#128218; Ausgew&auml;hlte installieren</button>',
-            '      <button class="btn btn-sm" id="ac-libs-all-btn">Alle ausw&auml;hlen</button>',
-            '      <button class="btn btn-sm" id="ac-libs-none-btn">Keine</button>',
-            '      <button class="btn btn-sm" id="ac-libs-default-btn">Standard</button>',
-            '    </div>',
-            '  </div>',
-            '  <div class="card">',
-            '    <h3>&#128190; Sketch (.ino) hochladen</h3>',
             '    <div class="upload-area" id="ino-upload-area">&#128196; <b>.ino</b> Sketch hierher ziehen oder klicken</div>',
             '    <input type="file" id="ino-input" accept=".ino" style="display:none">',
-            '  </div>',
-            '  <div class="card">',
-            '    <h3>&#9889; Kompilieren</h3>',
-            '    <div class="flash-row">',
+            '    <div class="flash-row" style="margin-top:12px">',
             '      <label>Sketch</label>',
             '      <select id="cp-sketch"><option value="">-- Sketch ausw&auml;hlen --</option></select>',
             '      <button class="btn btn-sm btn-red" id="cp-del-btn">&#128465; L&ouml;schen</button>',
             '    </div>',
             '    <div class="flash-row">',
+            '      <label>Name</label>',
+            '      <input type="text" id="cp-name" placeholder="optional Override (sonst Sketch-Name)" style="flex:1">',
+            '    </div>',
+            '    <div class="flash-row">',
             '      <label>Board</label>',
             '      <select id="cp-board">',
-            '        <option value="esp32:esp32:d1_mini32:PartitionScheme=min_spiffs">Wemos D1 Mini ESP32 (empfohlen)</option>',
-            '        <option value="esp32:esp32:d1_mini32">Wemos D1 Mini ESP32 (Standard)</option>',
-            '        <option value="esp32:esp32:esp32">ESP32 Dev Module</option>',
-            '        <option value="esp32:esp32:esp32s3:PartitionScheme=min_spiffs">ESP32-S3 WROOM-1 (4MB, empfohlen)</option>',
-            '        <option value="esp32:esp32:esp32s3">ESP32-S3 WROOM-1 (4MB, Standard)</option>',
-            '        <option value="esp32:esp32:esp32c3">ESP32-C3 Dev Module</option>',
-            '        <option value="esp32:esp32:esp32s2">ESP32-S2 Dev Module</option>',
-            '        <option value="esp8266:esp8266:nodemcuv2">NodeMCU 1.0 (ESP8266)</option>',
-            '        <option value="esp8266:esp8266:d1_mini">Wemos D1 Mini (ESP8266)</option>',
+            '        <option value="esp32:esp32:d1_mini32:PartitionScheme=min_spiffs">Wemos D1 Mini ESP32 → .esp32.bin (empfohlen)</option>',
+            '        <option value="esp32:esp32:d1_mini32">Wemos D1 Mini ESP32 → .esp32.bin</option>',
+            '        <option value="esp32:esp32:esp32">ESP32 Dev Module → .esp32.bin</option>',
+            '        <option value="esp32:esp32:esp32s3:PSRAM=enabled,FlashSize=8M,PartitionScheme=min_spiffs">YD-ESP32-S3 N8R2 → .esp32s3.bin (empfohlen)</option>',
+            '        <option value="esp32:esp32:esp32s3:PartitionScheme=min_spiffs">ESP32-S3 4MB → .esp32s3.bin</option>',
+            '        <option value="esp32:esp32:esp32s3">ESP32-S3 Standard → .esp32s3.bin</option>',
+            '        <option value="esp32:esp32:esp32c3">ESP32-C3 → .esp32c3.bin</option>',
+            '        <option value="esp32:esp32:esp32s2">ESP32-S2 → .esp32s2.bin</option>',
+            '        <option value="esp8266:esp8266:nodemcuv2">NodeMCU ESP8266 → .esp8266.bin</option>',
+            '        <option value="esp8266:esp8266:d1_mini">Wemos D1 Mini ESP8266 → .esp8266.bin</option>',
             '      </select>',
             '    </div>',
-            '    <div style="display:flex;gap:10px;align-items:center;margin-bottom:12px">',
-            '      <button class="btn btn-green" id="cp-btn" disabled>&#9889; Kompilieren</button>',
+            '    <div id="cp-preview" style="font-size:12px;font-family:var(--mono);color:var(--accent);margin:8px 0 12px">Ausgabe: —</div>',
+            '    <div style="display:flex;gap:10px;align-items:center;margin-bottom:12px;flex-wrap:wrap">',
+            '      <button class="btn btn-green" id="cp-btn" disabled>&#9889; Sketch kompilieren</button>',
             '      <button class="btn btn-sm" id="cp-clear-btn">Terminal leeren</button>',
             '      <button class="btn btn-sm" id="cp-copy-btn">&#128203; Log kopieren</button>',
             '      <span id="cp-status" style="font-size:12px;color:var(--muted)"></span>',
             '    </div>',
+            '  </div>',
+            '  <div class="card">',
+            '    <h3>&#128736; PlatformIO</h3>',
+            '    <div style="font-size:12px;color:var(--muted);margin-bottom:10px">',
+            '      Optional — wird beim Adapter-Start nur erkannt, <b>nicht</b> automatisch installiert (gro&szlig;er Download).',
+            '      Bei Bedarf Button unten. Lokaler Ordner <b>auf dem ioBroker-Host</b> oder &ouml;ffentliches GitHub-Repo.',
+            '      Ausgabe: <code>name.version[.usb|.ota].family.bin</code>.',
+            '    </div>',
+            '    <div id="pio-status" class="esptool-badge esptool-err" style="margin-bottom:10px">PlatformIO wird gepr&uuml;ft...</div>',
+            '    <div style="margin-bottom:10px;display:flex;gap:8px;flex-wrap:wrap">',
+            '      <button class="btn btn-sm btn-blue" id="pio-install-btn">PlatformIO jetzt installieren</button>',
+            '      <button class="btn btn-sm" id="pio-refresh-btn">&#8635; Status</button>',
+            '    </div>',
+            '    <div class="flash-row">',
+            '      <label>Quelle</label>',
+            '      <select id="pio-source" style="max-width:160px">',
+            '        <option value="path">Lokaler Ordner</option>',
+            '        <option value="github">GitHub URL</option>',
+            '      </select>',
+            '    </div>',
+            '    <div class="flash-row" id="pio-path-row">',
+            '      <label>Pfad</label>',
+            '      <input type="text" id="pio-path" placeholder="/home/iobroker/projects/hu-probe/firmware" style="flex:1;font-family:var(--mono);font-size:12px">',
+            '    </div>',
+            '    <div class="flash-row" id="pio-gh-row" style="display:none">',
+            '      <label>GitHub</label>',
+            '      <input type="text" id="pio-github" placeholder="https://github.com/org/repo/tree/main/firmware" style="flex:1;font-family:var(--mono);font-size:12px">',
+            '    </div>',
+            '    <div style="margin:8px 0">',
+            '      <button class="btn btn-sm btn-blue" id="pio-envs-btn">Envs laden</button>',
+            '    </div>',
+            '    <div class="flash-row">',
+            '      <label>Env</label>',
+            '      <select id="pio-env"><option value="">-- zuerst Envs laden --</option></select>',
+            '    </div>',
+            '    <div class="flash-row">',
+            '      <label>Name</label>',
+            '      <input type="text" id="pio-name" placeholder="optional (sonst Ordnername)" style="flex:1">',
+            '    </div>',
+            '    <div id="pio-preview" style="font-size:12px;font-family:var(--mono);color:var(--accent);margin:8px 0 12px">Ausgabe: —</div>',
+            '    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">',
+            '      <button class="btn btn-green" id="pio-btn" disabled>&#9889; PlatformIO bauen</button>',
+            '      <span id="pio-build-status" style="font-size:12px;color:var(--muted)"></span>',
+            '    </div>',
+            '  </div>',
+            '  <div class="card">',
+            '    <h3>Compile-Terminal</h3>',
             '    <div class="flash-term" id="compile-term">',
-            '      <div class="ft-line ft-dim">Bereit. Sketch hochladen und Board ausw&auml;hlen.</div>',
+            '      <div class="ft-line ft-dim">Bereit. Sketch oder PlatformIO-Projekt w&auml;hlen.</div>',
             '    </div>',
             '  </div>',
             '</div>',
@@ -2205,7 +2735,7 @@ class EspHub extends utils.Adapter {
             '    var p=document.getElementById("panel-"+t.dataset.tab);',
             '    if(p)p.classList.add("active");',
             '    if(t.dataset.tab==="flash"){loadPorts();loadFlashFirmwares();}',
-            '    if(t.dataset.tab==="compile"){loadArduinoStatus();loadSketches();loadFlashFirmwares();loadCoreList();loadDiskUsage();loadChipDirs();}',
+            '    if(t.dataset.tab==="compile"){loadArduinoStatus();loadPioStatus();loadSketches();loadFlashFirmwares();loadCoreList();loadDiskUsage();loadChipDirs();updateCompilePreview();}',
             '  });',
             '});',
             '',
@@ -2390,6 +2920,7 @@ class EspHub extends utils.Adapter {
             '    h+=\' v\'+esc(d.version||"?")+\'<br>\';',
             '    h+=\'RSSI: \'+esc(d.rssi||0)+\' dBm &nbsp;| Uptime: \'+fmtUptime(d.uptime||0);',
             '    h+=\'<br>Heap: \'+fmtSize(d.freeHeap||0);',
+            '    if(d.psramSize>0)h+=\' &nbsp;| PSRAM: \'+fmtSize(d.freePsram||0)+\'/\'+fmtSize(d.psramSize);',
             '    if(d.freeSketch>0)h+=\' &nbsp;| Flash frei: \'+fmtSize(d.freeSketch);',
             '    h+=\' &nbsp;| \'+fmtAge(d.lastSeen)+\'</div>\';',
             '    if(flashBar)h+=flashBar;',
@@ -2762,6 +3293,27 @@ class EspHub extends utils.Adapter {
             '      if(hint)hint.style.display="block";',
             '      if(btn)btn.disabled=true;',
             '    }',
+            '    if(typeof d.platformioReady!=="undefined")applyPioStatus(d.platformioReady,d.platformioCmd||"");',
+            '  }).catch(function(){});',
+            '}',
+            '',
+            'function applyPioStatus(ready,cmd){',
+            '  var badge=document.getElementById("pio-status");',
+            '  var btn=document.getElementById("pio-btn");',
+            '  if(!badge)return;',
+            '  if(ready){',
+            '    badge.className="esptool-badge esptool-ok";',
+            '    badge.innerHTML="&#10003; PlatformIO verf\\u00fcgbar"+(cmd?" ("+esc(cmd)+")":"");',
+            '    if(btn)btn.disabled=false;',
+            '  } else {',
+            '    badge.className="esptool-badge esptool-err";',
+            '    badge.innerHTML="&#10007; PlatformIO fehlt (optional) — Button &quot;jetzt installieren&quot;";',
+            '    if(btn)btn.disabled=true;',
+            '  }',
+            '}',
+            'function loadPioStatus(){',
+            '  fetch("/api/pio-status").then(function(r){return r.json();}).then(function(d){',
+            '    applyPioStatus(!!d.ready,d.cmd||"");',
             '  }).catch(function(){});',
             '}',
             '',
@@ -2772,9 +3324,43 @@ class EspHub extends utils.Adapter {
             '    if(!sel)return;',
             '    var cur=sel.value;',
             '    sel.innerHTML=\'<option value="">-- Sketch ausw\\u00e4hlen --</option>\';',
-            '    list.forEach(function(s){sel.innerHTML+=\'<option value="\'+esc(s.name)+\'">\'+esc(s.name)+\' (\'+fmtSize(s.size)+\')</option>\';});',
+            '    list.forEach(function(s){',
+            '      var lab=esc(s.name)+(s.version?" v"+esc(s.version):"")+" ("+fmtSize(s.size)+")";',
+            '      sel.innerHTML+=\'<option value="\'+esc(s.name)+\'" data-ver="\'+esc(s.version||"")+\'">\'+lab+\'</option>\';',
+            '    });',
             '    if(cur)sel.value=cur;',
+            '    updateCompilePreview();',
             '  }).catch(function(){});',
+            '}',
+            '',
+            'function familyFromFqbn(fqbn){',
+            '  var t=(fqbn||"").toLowerCase();',
+            '  if(/esp32s3|esp32-s3/.test(t))return "esp32s3";',
+            '  if(/esp32s2|esp32-s2/.test(t))return "esp32s2";',
+            '  if(/esp32c3|esp32-c3/.test(t))return "esp32c3";',
+            '  if(/esp8266|nodemcuv2|:d1_mini\\b/.test(t)&&t.indexOf("d1_mini32")<0)return "esp8266";',
+            '  if(/esp32/.test(t))return "esp32";',
+            '  return "esp32";',
+            '}',
+            'function updateCompilePreview(){',
+            '  var sk=document.getElementById("cp-sketch");',
+            '  var bd=document.getElementById("cp-board");',
+            '  var nm=document.getElementById("cp-name");',
+            '  var prev=document.getElementById("cp-preview");',
+            '  if(!prev||!sk||!bd)return;',
+            '  if(!sk.value){prev.textContent="Ausgabe: —";return;}',
+            '  var q="sketch="+encodeURIComponent(sk.value)+"&fqbn="+encodeURIComponent(bd.value);',
+            '  if(nm&&nm.value)q+="&name="+encodeURIComponent(nm.value);',
+            '  fetch("/api/compile-preview?"+q).then(function(r){return r.json();}).then(function(d){',
+            '    if(d.ok)prev.textContent="Ausgabe: "+d.destName;',
+            '    else prev.textContent="Ausgabe: "+(nm&&nm.value?nm.value:sk.value)+".?. "+familyFromFqbn(bd.value)+".bin";',
+            '  }).catch(function(){',
+            '    var ver="0.0.0-dev";',
+            '    var opt=sk.options[sk.selectedIndex];',
+            '    if(opt&&opt.dataset.ver)ver=opt.dataset.ver;',
+            '    var name=(nm&&nm.value)?nm.value:sk.value;',
+            '    prev.textContent="Ausgabe: "+name+"."+ver+"."+familyFromFqbn(bd.value)+".bin";',
+            '  });',
             '}',
             '',
             'function pollCompileLog(doneCb){',
@@ -2782,21 +3368,26 @@ class EspHub extends utils.Adapter {
             '    var term=document.getElementById("compile-term");',
             '    var st=document.getElementById("cp-status");',
             '    var btn=document.getElementById("cp-btn");',
+            '    var pioBtn=document.getElementById("pio-btn");',
+            '    var pioSt=document.getElementById("pio-build-status");',
             '    if(term){',
             '      term.innerHTML="";',
             '      d.log.slice().reverse().forEach(function(e){',
             '        var div=document.createElement("div");',
-            '        div.className="ft-line"+(e.err?" ft-err":(e.line&&(e.line.startsWith("\\u2705")||e.line.includes("erfolgreich"))?" ft-ok":""));',
+            '        div.className="ft-line"+(e.err?" ft-err":(e.line&&(e.line.startsWith("\\u2705")||e.line.includes("erfolgreich")||e.line.includes("PIO OK"))?" ft-ok":""));',
             '        div.textContent=e.line;',
             '        term.insertBefore(div,term.firstChild);',
             '      });',
             '    }',
             '    if(d.running){',
             '      if(st)st.textContent="\\u23F3 Kompiliere...";',
+            '      if(pioSt)pioSt.textContent="\\u23F3 L\\u00e4uft...";',
             '      compilePolling=setTimeout(function(){pollCompileLog(doneCb);},1000);',
             '    } else {',
             '      if(st)st.textContent="Fertig";',
+            '      if(pioSt)pioSt.textContent="Fertig";',
             '      if(btn)btn.disabled=false;',
+            '      if(pioBtn)pioBtn.disabled=false;',
             '      compilePolling=null;',
             '      loadFlashFirmwares();',
             '      if(doneCb)doneCb();',
@@ -2807,6 +3398,7 @@ class EspHub extends utils.Adapter {
             'document.getElementById("cp-btn").addEventListener("click",function(){',
             '  var sk=document.getElementById("cp-sketch").value;',
             '  var bd=document.getElementById("cp-board").value;',
+            '  var nm=(document.getElementById("cp-name")||{}).value||"";',
             '  if(!sk){alert("Bitte Sketch ausw\\u00e4hlen!");return;}',
             '  if(!bd){alert("Bitte Board ausw\\u00e4hlen!");return;}',
             '  var btn=document.getElementById("cp-btn");',
@@ -2816,7 +3408,7 @@ class EspHub extends utils.Adapter {
             '  if(st)st.textContent="\\u23F3 Starte...";',
             '  if(term)term.innerHTML="";',
             '  fetch("/api/compile",{method:"POST",headers:{"Content-Type":"application/json"},',
-            '    body:JSON.stringify({sketch:sk,fqbn:bd})})',
+            '    body:JSON.stringify({sketch:sk,fqbn:bd,name:nm})})',
             '  .then(function(r){return r.json();})',
             '  .then(function(res){',
             '    if(!res.ok){',
@@ -2825,8 +3417,16 @@ class EspHub extends utils.Adapter {
             '      if(term)term.insertBefore(div,term.firstChild);',
             '      btn.disabled=false;if(st)st.textContent="Fehler";return;',
             '    }',
+            '    if(res.destName&&st)st.textContent="\\u23F3 "+res.destName;',
             '    pollCompileLog();',
             '  }).catch(function(e){btn.disabled=false;if(st)st.textContent="Fehler: "+e;});',
+            '});',
+            '',
+            '["cp-sketch","cp-board","cp-name"].forEach(function(id){',
+            '  var el=document.getElementById(id);',
+            '  if(!el)return;',
+            '  el.addEventListener("change",updateCompilePreview);',
+            '  el.addEventListener("input",updateCompilePreview);',
             '});',
             '',
             'document.getElementById("cp-del-btn").addEventListener("click",function(){',
@@ -2843,27 +3443,93 @@ class EspHub extends utils.Adapter {
             '  if(term)term.innerHTML=\'<div class="ft-line ft-dim">Terminal geleert.</div>\';',
             '});',
             '',
-            'document.getElementById("ac-libs-btn").addEventListener("click",function(){',
-            '  var checks=document.querySelectorAll("#lib-grid input[type=checkbox]:checked");',
-            '  var libs=Array.from(checks).map(function(c){return c.value;});',
-            '  if(!libs.length){alert("Bitte mindestens eine Bibliothek ausw\\u00e4hlen!");return;}',
+            '// ── PlatformIO UI ──────────────────────────────────',
+            'var pioEnvMeta={};',
+            'document.getElementById("pio-source").addEventListener("change",function(){',
+            '  var v=document.getElementById("pio-source").value;',
+            '  document.getElementById("pio-path-row").style.display=v==="path"?"":"none";',
+            '  document.getElementById("pio-gh-row").style.display=v==="github"?"":"none";',
+            '});',
+            'document.getElementById("pio-refresh-btn").addEventListener("click",loadPioStatus);',
+            'document.getElementById("pio-install-btn").addEventListener("click",function(){',
+            '  if(!confirm("PlatformIO auf dem Hub-Host installieren? (kann einige Minuten dauern)"))return;',
             '  var term=document.getElementById("compile-term");',
             '  if(term)term.innerHTML="";',
-            '  fetch("/api/lib-install",{method:"POST",headers:{"Content-Type":"application/json"},',
-            '    body:JSON.stringify({libs:libs})})',
-            '  .then(function(){pollCompileLog();});',
-            '});',
-            'document.getElementById("ac-libs-all-btn").addEventListener("click",function(){',
-            '  document.querySelectorAll("#lib-grid input[type=checkbox]").forEach(function(c){c.checked=true;});',
-            '});',
-            'document.getElementById("ac-libs-none-btn").addEventListener("click",function(){',
-            '  document.querySelectorAll("#lib-grid input[type=checkbox]").forEach(function(c){c.checked=false;});',
-            '});',
-            'document.getElementById("ac-libs-default-btn").addEventListener("click",function(){',
-            '  var defaults=["WiFiManager","ArduinoJson"];',
-            '  document.querySelectorAll("#lib-grid input[type=checkbox]").forEach(function(c){',
-            '    c.checked=defaults.indexOf(c.value)>=0;',
+            '  fetch("/api/pio-install",{method:"POST"}).then(function(r){return r.json();}).then(function(res){',
+            '    if(!res.ok){alert(res.error||"Fehler");return;}',
+            '    pollCompileLog(function(){loadPioStatus();});',
             '  });',
+            '});',
+            'function updatePioPreview(){',
+            '  var prev=document.getElementById("pio-preview");',
+            '  var env=document.getElementById("pio-env").value;',
+            '  var nm=(document.getElementById("pio-name")||{}).value||"";',
+            '  if(!prev)return;',
+            '  var meta=pioEnvMeta[env];',
+            '  if(!meta){prev.textContent="Ausgabe: —";return;}',
+            '  var name=nm||meta.nameHint||"firmware";',
+            '  var dest=meta.destPreview||"";',
+            '  if(nm&&meta.version&&meta.family){',
+            '    dest=name+"."+meta.version+(meta.extra?"."+meta.extra:"")+"."+meta.family+".bin";',
+            '  }',
+            '  prev.textContent="Ausgabe: "+dest;',
+            '}',
+            'document.getElementById("pio-envs-btn").addEventListener("click",function(){',
+            '  var src=document.getElementById("pio-source").value;',
+            '  var body={};',
+            '  if(src==="path"){',
+            '    body.path=document.getElementById("pio-path").value.trim();',
+            '    if(!body.path){alert("Pfad angeben");return;}',
+            '  } else {',
+            '    body.github=document.getElementById("pio-github").value.trim();',
+            '    if(!body.github){alert("GitHub-URL angeben");return;}',
+            '  }',
+            '  var term=document.getElementById("compile-term");',
+            '  var st=document.getElementById("pio-build-status");',
+            '  if(st)st.textContent="Lade Envs...";',
+            '  if(src==="github"&&term)term.innerHTML="";',
+            '  fetch("/api/pio-envs",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)})',
+            '  .then(function(r){return r.json();})',
+            '  .then(function(res){',
+            '    if(src==="github")pollCompileLog();',
+            '    if(!res.ok){alert(res.error||"Fehler");if(st)st.textContent="Fehler";return;}',
+            '    var sel=document.getElementById("pio-env");',
+            '    sel.innerHTML="";',
+            '    pioEnvMeta={};',
+            '    (res.envs||[]).forEach(function(e){',
+            '      e.nameHint=res.nameHint;',
+            '      pioEnvMeta[e.name]=e;',
+            '      sel.innerHTML+=\'<option value="\'+esc(e.name)+\'">\'+esc(e.name)+\' (\'+esc(e.family)+\', v\'+esc(e.version)+\')</option>\';',
+            '    });',
+            '    if(res.defaultEnvs&&res.defaultEnvs[0])sel.value=res.defaultEnvs[0];',
+            '    var nameEl=document.getElementById("pio-name");',
+            '    if(nameEl&&!nameEl.value&&res.nameHint)nameEl.placeholder=res.nameHint;',
+            '    updatePioPreview();',
+            '    if(st)st.textContent=(res.envs||[]).length+" Env(s)";',
+            '  }).catch(function(e){alert(e);});',
+            '});',
+            'document.getElementById("pio-env").addEventListener("change",updatePioPreview);',
+            'document.getElementById("pio-name").addEventListener("input",updatePioPreview);',
+            'document.getElementById("pio-btn").addEventListener("click",function(){',
+            '  var src=document.getElementById("pio-source").value;',
+            '  var env=document.getElementById("pio-env").value;',
+            '  var nm=(document.getElementById("pio-name")||{}).value||"";',
+            '  if(!env){alert("Bitte Env laden und ausw\\u00e4hlen");return;}',
+            '  var body={env:env,name:nm};',
+            '  if(src==="path")body.path=document.getElementById("pio-path").value.trim();',
+            '  else body.github=document.getElementById("pio-github").value.trim();',
+            '  var btn=document.getElementById("pio-btn");',
+            '  var st=document.getElementById("pio-build-status");',
+            '  var term=document.getElementById("compile-term");',
+            '  btn.disabled=true;',
+            '  if(st)st.textContent="\\u23F3 Build...";',
+            '  if(term)term.innerHTML="";',
+            '  fetch("/api/pio-compile",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)})',
+            '  .then(function(r){return r.json();})',
+            '  .then(function(res){',
+            '    if(!res.ok){alert(res.error||"Fehler");btn.disabled=false;if(st)st.textContent="Fehler";return;}',
+            '    pollCompileLog(function(){btn.disabled=false;loadPioStatus();});',
+            '  }).catch(function(e){btn.disabled=false;if(st)st.textContent=""+e;});',
             '});',
             '',
             'document.getElementById("cp-copy-btn").addEventListener("click",function(){',
@@ -2920,8 +3586,9 @@ class EspHub extends utils.Adapter {
             '    el.innerHTML=',
             '      \'<b>arduino-cli Cache:</b> \'+d.cache+\' MB &nbsp;|&nbsp;\'+',
             '      \'<b>Sketches:</b> \'+(d.sketches-d.builds)+\' MB &nbsp;|&nbsp;\'+',
-            '      \'<b>Firmware (.bin):</b> \'+d.firmware+\' MB\'+',
-            '      \'<br><span style="color:var(--dim);font-size:11px">Build-Dateien und arduino-cli Cache werden beim Bereinigen entfernt.</span>\';',
+            '      \'<b>Firmware (.bin):</b> \'+d.firmware+\' MB &nbsp;|&nbsp;\'+',
+            '      \'<b>PIO Temp:</b> \'+(d.pio||0)+\' MB\'+',
+            '      \'<br><span style="color:var(--dim);font-size:11px">Build-Dateien, arduino-cli Cache und PlatformIO-Temp werden beim Bereinigen entfernt.</span>\';',
             '  }).catch(function(){});',
             '}',
             '',
@@ -3070,7 +3737,7 @@ class EspHub extends utils.Adapter {
             '  .then(function(r){return r.json();})',
             '  .then(function(res){',
             '    if(area)area.innerHTML=\'&#128196; <b>.ino</b> Sketch hierher ziehen oder klicken\';',
-            '    if(res.ok){loadSketches();var sel=document.getElementById("cp-sketch");setTimeout(function(){if(sel)sel.value=res.name;},200);}',
+            '    if(res.ok){loadSketches();var sel=document.getElementById("cp-sketch");setTimeout(function(){if(sel){sel.value=res.name;updateCompilePreview();}},200);}',
             '    else alert("Upload-Fehler: "+res.error);',
             '  }).catch(function(e){',
             '    if(area)area.innerHTML=\'&#128196; <b>.ino</b> Sketch hierher ziehen oder klicken\';',

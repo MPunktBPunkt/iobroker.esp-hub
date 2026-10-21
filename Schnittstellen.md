@@ -284,6 +284,25 @@ MAC-Adresse: nur Hex-Zeichen, keine Doppelpunkte, Großbuchstaben.
 
 ---
 
+## 3b. Compile-APIs (Hub-UI / Admin)
+
+Firmware-Namen: `{name}.{version}[.usb|.ota].{family}.bin`  
+(`family` ∈ `esp32` | `esp32s3` | `esp32c3` | … — aus Board-FQBN bzw. PlatformIO `board =`).
+
+| Methode | Pfad | Zweck |
+|---|---|---|
+| POST | `/api/compile` | Arduino-Sketch: `{ sketch, fqbn, name? }` → startet Build |
+| GET | `/api/compile-preview?sketch=&fqbn=&name=` | Ziel-Dateiname ohne Build |
+| POST | `/api/pio-envs` | `{ path }` oder `{ github }` → Env-Liste |
+| POST | `/api/pio-compile` | `{ path\|github, env, name?, version? }` → PlatformIO-Build |
+| GET | `/api/pio-status` | `platformio-cli` bereit? |
+| POST | `/api/pio-install` | PlatformIO auf dem Hub-Host installieren |
+| GET | `/api/compile-log` | gemeinsames Build-Log |
+
+Lokale PlatformIO-Pfade nur unter Allowlist (`$HOME`, `/opt`, `/home/iobroker`, `/tmp/iobroker-esphub-pio`). GitHub nur `https://github.com/…` (öffentlich).
+
+---
+
 ## 4. Netzwerktopologie
 
 ```

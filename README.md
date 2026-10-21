@@ -1,6 +1,6 @@
 # iobroker.esp-hub
 
-![Version](https://img.shields.io/badge/version-0.5.8-blue)
+![Version](https://img.shields.io/badge/version-0.5.13-blue)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 [![Donate](https://img.shields.io/badge/Donate-PayPal-00457C.svg?logo=paypal)](https://www.paypal.com/donate/?business=martin%40bchmnn.de&currency_code=EUR)
 
@@ -13,8 +13,7 @@
 - 📡 **Geräteverwaltung** — ESP32/ESP8266 registrieren sich per Heartbeat, Status als ioBroker-States
 - 🔌 **USB-Programmierung** — esptool.py wird automatisch installiert, ESP erkennen + direkt flashen
 - 💻 **Serieller Monitor** — Live-Debug-Ausgabe vom ESP direkt im Browser
-- ⚙️ **Compiler** — arduino-cli Auto-Install, .ino hochladen, kompilieren, flashen
-- 📚 **Bibliotheks-Manager** — 20+ Bibliotheken in 6 Kategorien per Checkbox installieren
+- ⚙️ **Compiler** — arduino-cli + PlatformIO: Sketch oder `platformio.ini`-Projekt → `.bin`
 - 🚀 **OTA-Updates** — Firmware per WLAN auf laufende ESPs verteilen
 - 🧩 **ioBroker States** — IP, Version, RSSI, Uptime, Heap, IO-Werte pro Gerät
 
@@ -87,7 +86,7 @@ Web-UI: `http://<ioBroker-IP>:8093`
 |---|---|
 | 📡 Geräte | Alle ESPs mit Chip-Badge, Flash-Balken, Pinout-Panel, OTA-Push |
 | 🔌 Programmieren | ESP erkennen, USB-Flash, Serieller Monitor |
-| ⚙️ Kompilieren | arduino-cli, Bibliotheks-Manager, .ino → .bin |
+| ⚙️ Kompilieren | arduino-cli / PlatformIO, Chip-Varianten, Sketch oder PIO → `.bin` |
 | 📋 Logs | Adapter-Logs mit Filter und Export |
 | 🔧 System | Firmware hochladen, Versionsprüfung, Self-Update |
 
@@ -107,16 +106,21 @@ Einheitliches Schema (Chip-Familie am Ende):
 
 | Familie | Beispiel |
 |---|---|
-| `esp32` | `esp-hub-base.1.7.0.esp32.bin` (D1 Mini ESP32 u.ä.) |
-| `esp32s3` | `esp-hub-base.1.7.0.esp32s3.bin` |
+| `esp32` | `esp-hub-base.1.8.0.esp32.bin` (D1 Mini ESP32 u.ä.) |
+| `esp32s3` | `esp-hub-base.1.8.0.esp32s3.bin` |
 
-Kompilieren benennt die `.bin` automatisch so. Flash und OTA prüfen die Familie gegen den Chip — S3-Firmware lässt sich nicht auf einen klassischen ESP32 schreiben (und umgekehrt).
+Kompilieren benennt die `.bin` automatisch so:
+
+- **Arduino:** `name` = Sketch (oder Override), `version` = `#define FW_VERSION`, `family` = Board-Dropdown (FQBN)
+- **PlatformIO:** `name` = Projektordner (ohne `esp32.`-Prefix), `version` = `-DFW_VERSION`, `family` = `board = …` im Env; Env-Namen mit `usb`/`ota` → Extra-Segment
+
+Flash und OTA prüfen die Familie gegen den Chip — S3-Firmware lässt sich nicht auf einen klassischen ESP32 schreiben (und umgekehrt).
 
 ### Gebündelte Firmwares (`firmware/`)
 
 | Projekt | Version | Dateien |
 |---------|---------|---------|
-| esp-hub-base | 1.7.0 | `esp-hub-base.1.7.0.esp32.bin` / `.esp32s3.bin` |
+| esp-hub-base | 1.8.0 | `esp-hub-base.1.8.0.esp32.bin` / `.esp32s3.bin` |
 | esp32.network | 1.6.6 | `network.1.6.6.esp32.bin` / `.esp32s3.bin` |
 | esp32.webradio | 2.4.0 | `webradio.2.4.0.esp32.bin` / `.esp32s3.bin` |
 | esp32.io-control | 1.6.1 | `io-control.1.6.1.esp32.bin` / `.esp32s3.bin` |
@@ -131,11 +135,20 @@ Projektübersicht und Portal-SSIDs: [ESP32.esp-hub](https://github.com/MPunktBPu
 
 ### Eigene Firmware kompilieren
 
-1. **Kompilieren-Tab** → `+ ESP32 Board-Paket` installieren
-2. **📚 Bibliotheken** → WiFiManager + ArduinoJson auswählen → installieren
-3. `.ino` per Drag & Drop hochladen
-4. Board wählen → **⚡ Kompilieren**
-5. .bin erscheint automatisch im Programmieren-Tab (`name.boardFamily.bin`)
+**Arduino Sketch**
+
+1. **Kompilieren-Tab** → `+ ESP32 Board-Paket` installieren (danach ungenutzte Chip-Varianten löschen)
+2. `.ino` per Drag & Drop hochladen
+3. Board wählen (bestimmt `.esp32` / `.esp32s3` / …) → Vorschau prüfen → **Sketch kompilieren**
+4. WiFiManager + ArduinoJson werden beim Compile automatisch sichergestellt
+5. `.bin` erscheint als `{name}.{version}.{family}.bin` im Programmieren-Tab
+
+**PlatformIO**
+
+1. PlatformIO auf dem Hub-Host installieren (Button im Tab) oder `pio` im PATH
+2. **Lokaler Ordner** auf dem ioBroker-Host (Allowlist: `$HOME`, `/opt`, `/home/iobroker`, `/tmp/iobroker-esphub-pio`) **oder** öffentliche GitHub-URL (`…/tree/branch/subdir`)
+3. **Envs laden** → Env wählen → **PlatformIO bauen**
+4. Artifact: `.pio/build/<env>/firmware.bin` → umbenannt nach Schema (inkl. optional `.usb.` / `.ota.`)
 
 ### Partition Scheme (Speicheraufteilung)
 
@@ -150,13 +163,11 @@ Für den ESP32-S3 WROOM-1 (4MB Flash) empfiehlt sich **Minimal SPIFFS**:
 
 Die 8M/16M/32M-Schemata erfordern Boards mit entsprechend größerem Flash-Chip — nicht für WROOM-1 (4MB) geeignet.
 
-### Bibliotheken (Arduino Library Manager)
+### Bibliotheken
 
-- **WiFiManager** (tablatronix/tzapu) — WLAN Captive Portal
-- **ArduinoJson** (bblanchon) — JSON-Serialisierung
-
-Viele weitere Bibliotheken im integrierten Bibliotheks-Manager:
-Display, Sensoren, LED, Aktoren, Kommunikation, Energie & Messtechnik.
+Arduino-Hub-Basis: **WiFiManager**, **ArduinoJson** (automatisch beim Sketch-Compile).  
+Weitere Arduino-Libs: lokal per `arduino-cli lib install …`.  
+PlatformIO: Abhängigkeiten über `lib_deps` in `platformio.ini` (kein globaler Lib-Manager im Hub).
 
 ### Erststart ESP
 
@@ -211,6 +222,9 @@ esp-hub.0
     ├── rssi                 number   WLAN-Signal (dBm)
     ├── uptime               number   Uptime (Sekunden)
     ├── freeHeap             number   Freier Heap (Bytes)
+    ├── freeSketch           number   Freier OTA-Flash (Bytes)
+    ├── freePsram            number   Freier PSRAM (Bytes, optional)
+    ├── psramSize            number   PSRAM Gesamt (Bytes, optional)
     ├── lastSeen             number   Timestamp letzter Heartbeat
     ├── online               boolean  < 120s seit lastSeen
     ├── ios                  string   IO-Werte als JSON
@@ -224,7 +238,7 @@ esp-hub.0
 ## ESP-API
 
 ```
-POST /api/register         Heartbeat {mac, name, hwType, version, ip, rssi, uptime, freeHeap, ios}
+POST /api/register         Heartbeat {mac, name, hwType, version, ip, rssi, uptime, freeHeap, freeSketch, freePsram?, psramSize?, ios}
 POST /api/session-export   Heart-Rate Session-Export (JSON-Body vom ESP) → lastSessionExport*
 GET  /api/ota/check        OTA-Abfrage ?mac=XXX → {update:bool, url?}
 GET  /firmware/*.bin       Firmware-Binary ausliefern

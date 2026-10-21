@@ -1,8 +1,12 @@
 {
   "common": {
     "name": "esp-hub",
-    "version": "0.5.12",
+    "version": "0.5.13",
     "news": {
+      "0.5.13": {
+        "en": "Compile tab: PlatformIO builds (path/GitHub), firmware names name.version.family.bin, PSRAM board option, freePsram telemetry; optional PIO install (no auto-install)",
+        "de": "Kompilieren: PlatformIO-Builds (Pfad/GitHub), Firmware-Namen name.version.family.bin, PSRAM-Board, freePsram; PIO optional per Button (kein Auto-Install)"
+      },
       "0.5.12": {
         "en": "Bundled heartrate firmware 0.3.2 (keep advertising for 2nd client after ergo connects)",
         "de": "Gebuendelte Heartrate-Firmware 0.3.2 (Advertising fuer 2. Client nach Ergo-Connect bleibt aktiv)"
