@@ -1,6 +1,6 @@
 # iobroker.esp-hub
 
-![Version](https://img.shields.io/badge/version-0.5.13-blue)
+![Version](https://img.shields.io/badge/version-0.5.14-blue)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 [![Donate](https://img.shields.io/badge/Donate-PayPal-00457C.svg?logo=paypal)](https://www.paypal.com/donate/?business=martin%40bchmnn.de&currency_code=EUR)
 
@@ -130,6 +130,7 @@ Flash und OTA prüfen die Familie gegen den Chip — S3-Firmware lässt sich nic
 | esp32.heartrate | 0.3.2 | `heartrate.0.3.2.esp32.bin` / `.esp32s3.bin` |
 | esp32.ftmsprobe | 0.1.4 | `ftmsprobe.0.1.4.esp32.bin` / `.esp32s3.bin` |
 | esp32.pidrive | 0.4.2-dev | `pidrive.0.4.2-dev.usb.esp32s3.bin` (Flash @0x0) / `pidrive.0.4.2-dev.ota.esp32s3.bin` (OTA) |
+| hu-probe | 0.3.19 | `hu-probe.0.3.19.esp32s3.bin` (Feld 23.10. Identity/Detach) |
 
 Projektübersicht und Portal-SSIDs: [ESP32.esp-hub](https://github.com/MPunktBPunkt/ESP32.esp-hub).
 
@@ -145,7 +146,7 @@ Projektübersicht und Portal-SSIDs: [ESP32.esp-hub](https://github.com/MPunktBPu
 
 **PlatformIO**
 
-1. PlatformIO auf dem Hub-Host installieren (Button im Tab) oder `pio` im PATH
+1. PlatformIO auf dem Hub-Host installieren (Button im Tab) oder `pio` im PATH — der Button prüft vorher `python3-venv`/`pip`/`curl` und versucht fehlende Pakete per `sudo -n apt-get` nachzuziehen
 2. **Lokaler Ordner** auf dem ioBroker-Host (Allowlist: `$HOME`, `/opt`, `/home/iobroker`, `/tmp/iobroker-esphub-pio`) **oder** öffentliche GitHub-URL (`…/tree/branch/subdir`)
 3. **Envs laden** → Env wählen → **PlatformIO bauen**
 4. Artifact: `.pio/build/<env>/firmware.bin` → umbenannt nach Schema (inkl. optional `.usb.` / `.ota.`)
@@ -255,6 +256,12 @@ GNU General Public License v3.0 © MPunktBPunkt — siehe [LICENSE](LICENSE)
 ---
 
 ## Changelog
+
+### 0.5.14
+- PlatformIO-/esptool-Install: Preflight für `python3-venv` / `pip` / `curl`, Nachziehen per `sudo -n apt-get` wenn möglich
+
+### 0.5.13
+- Kompilieren: PlatformIO-Builds (Pfad/GitHub), Firmware-Namen `name.version.family.bin`, PSRAM-Board, freePsram; PIO optional per Button
 
 ### 0.5.12
 - Gebündelte Firmware: heartrate **0.3.2** (Advertising bleibt für 2. Client nach Ergo-Connect)
