@@ -7,7 +7,7 @@ const fs       = require('fs');
 const path     = require('path');
 const { exec } = require('child_process');
 
-const ADAPTER_VERSION = '0.5.13';
+const ADAPTER_VERSION = '0.5.14';
 const NODE_ONLINE_SEC = 120;
 const FIRMWARE_DIR    = '/tmp/iobroker-esphub-fw';
 const SKETCH_DIR      = '/tmp/iobroker-esphub-sketches';
@@ -452,10 +452,17 @@ class EspHub extends utils.Adapter {
         if (localIp) d.serverIp = localIp;
 
         d.ip         = body.ip         || d.ip         || '';
-        // Device is source of truth for the display name (Web-UI rename must reach Hub).
-        // Empty body.name keeps the previous value; never sticky-lock the first name forever.
-        if (typeof body.name === 'string' && body.name.trim().length > 0) {
-            d.name = body.name.trim();
+        // Name sync:
+        // - Hub rename sets pendingName → keep it in replies until the device echoes it back.
+        // - Otherwise the device is source of truth (portal / local rename → Hub).
+        const bodyName = (typeof body.name === 'string') ? body.name.trim() : '';
+        if (d.pendingName) {
+            if (bodyName && bodyName === d.pendingName) {
+                delete d.pendingName;
+            }
+            d.name = d.pendingName || d.name || ('ESP-' + mac.slice(-4));
+        } else if (bodyName.length > 0) {
+            d.name = bodyName;
         } else {
             d.name = d.name || ('ESP-' + mac.slice(-4));
         }
@@ -836,37 +843,178 @@ class EspHub extends utils.Adapter {
         else this._log('INFO', 'COMPILE', 'platformio-cli nicht gefunden (optional für PIO-Builds)');
     }
 
+    /**
+     * Ensure host Python can create venvs (and optionally pip/curl/git).
+     * Tries passwordless sudo apt when modules/tools are missing.
+     * @param {{addLine?: Function, needPip?: boolean, needCurl?: boolean, needGit?: boolean}} opts
+     */
+    _ensurePythonHostDeps(opts, cb) {
+        const self = this;
+        const o = opts || {};
+        const log = (msg, isErr) => {
+            if (typeof o.addLine === 'function') o.addLine(msg, !!isErr);
+            else self._log(isErr ? 'WARN' : 'INFO', 'TOOLS', msg);
+        };
+        const run = (cmd, timeout, next) => {
+            exec(cmd, { timeout: timeout || 15000 }, (err, out, stderr) => {
+                next(err, String(out || '') + String(stderr || ''));
+            });
+        };
+        const hasCmd = (name, next) => {
+            run('command -v ' + name + ' >/dev/null 2>&1', 5000, (err) => next(!err));
+        };
+        const hasMod = (mod, next) => {
+            run('python3 -c "import ' + mod + '" 2>&1', 8000, (err) => next(!err));
+        };
+        const hasPip = (next) => {
+            run('python3 -m pip --version 2>&1', 8000, (err) => next(!err));
+        };
+
+        hasCmd('python3', (pyOk) => {
+            if (!pyOk) {
+                const msg = 'python3 nicht gefunden — bitte System-Python installieren';
+                log('❌ ' + msg, true);
+                return cb(new Error(msg));
+            }
+
+            const checkAll = (done) => {
+                hasMod('venv', (venvOk) => {
+                    const needPip = o.needPip !== false;
+                    const needCurl = !!o.needCurl;
+                    const needGit = !!o.needGit;
+                    const finish = (pipOk, curlOk, gitOk) => {
+                        done({
+                            venvOk,
+                            pipOk: needPip ? pipOk : true,
+                            curlOk: needCurl ? curlOk : true,
+                            gitOk: needGit ? gitOk : true,
+                            needPip, needCurl, needGit
+                        });
+                    };
+                    if (!needPip && !needCurl && !needGit) return finish(true, true, true);
+                    hasPip((pipOk) => {
+                        if (!needCurl && !needGit) return finish(pipOk, true, true);
+                        hasCmd('curl', (curlOk) => {
+                            if (!needGit) return finish(pipOk, curlOk, true);
+                            hasCmd('git', (gitOk) => finish(pipOk, curlOk, gitOk));
+                        });
+                    });
+                });
+            };
+
+            checkAll((st) => {
+                if (st.venvOk && st.pipOk && st.curlOk && st.gitOk) return cb(null);
+
+                const missingLabels = [];
+                if (!st.venvOk) missingLabels.push('python3-venv');
+                if (st.needPip && !st.pipOk) missingLabels.push('python3-pip');
+                if (st.needCurl && !st.curlOk) missingLabels.push('curl');
+                if (st.needGit && !st.gitOk) missingLabels.push('git');
+                log('▶ Fehlende Host-Pakete: ' + missingLabels.join(', ') + ' — versuche apt…', false);
+
+                run('python3 -c "import sys; print(\'%d.%d\' % (sys.version_info[0], sys.version_info[1]))" 2>&1',
+                    5000, (verErr, verOut) => {
+                        const ver = String(verOut || '').trim().split('\n').pop() || '';
+                        const candidates = [];
+                        if (!st.venvOk) {
+                            candidates.push('python3-venv');
+                            if (/^\d+\.\d+$/.test(ver)) candidates.push('python' + ver + '-venv');
+                        }
+                        if (st.needPip && !st.pipOk) candidates.push('python3-pip');
+                        if (st.needCurl && !st.curlOk) candidates.push('curl');
+                        if (st.needGit && !st.gitOk) candidates.push('git');
+
+                        const filterCmd =
+                            'pkgs=""; ' +
+                            candidates.map(p =>
+                                'if apt-cache show ' + JSON.stringify(p) + ' >/dev/null 2>&1; then pkgs="$pkgs ' + p + '"; fi'
+                            ).join('; ') +
+                            '; echo "$pkgs"';
+
+                        run(filterCmd, 30000, (fErr, fOut) => {
+                            const pkgs = String(fOut || '').trim().replace(/\s+/g, ' ');
+                            if (!pkgs) {
+                                const tip = 'sudo apt-get install -y ' + missingLabels.join(' ');
+                                log('❌ Keine passenden apt-Pakete gefunden. Manuell: ' + tip, true);
+                                return cb(new Error('python host deps missing'));
+                            }
+
+                            const aptCmd =
+                                'sudo -n DEBIAN_FRONTEND=noninteractive apt-get install -y ' + pkgs + ' 2>&1';
+                            log('▶ ' + aptCmd.replace(/\s+/g, ' ').trim(), false);
+                            run(aptCmd, 300000, (aptErr, aptOut) => {
+                                String(aptOut || '').split('\n').forEach(l => {
+                                    if (l.trim()) log(l.trim(), false);
+                                });
+                                checkAll((st2) => {
+                                    if (st2.venvOk && st2.pipOk && st2.curlOk && st2.gitOk) {
+                                        log('✅ Host-Python-Abhängigkeiten bereit', false);
+                                        return cb(null);
+                                    }
+                                    const still = [];
+                                    if (!st2.venvOk) still.push('venv');
+                                    if (st2.needPip && !st2.pipOk) still.push('pip');
+                                    if (st2.needCurl && !st2.curlOk) still.push('curl');
+                                    if (st2.needGit && !st2.gitOk) still.push('git');
+                                    const tip =
+                                        'sudo apt-get install -y python3-venv' +
+                                        (ver ? ' python' + ver + '-venv' : '') +
+                                        ' python3-pip curl git';
+                                    log('❌ Nach apt weiterhin fehlend: ' + still.join(', ') +
+                                        '. Manuell (ggf. mit Passwort): ' + tip, true);
+                                    if (aptErr) {
+                                        log('Hinweis: sudo ohne Passwort nötig (sudo -n), oder Pakete manuell installieren.', true);
+                                    }
+                                    cb(new Error('python host deps missing: ' + still.join(',')));
+                                });
+                            });
+                        });
+                    });
+            });
+        });
+    }
+
     _installPlatformIo(cb) {
         const self = this;
         const addLine = (line, isErr) => self._addCompileLine(line, isErr);
         self.compileLog = [];
         self.compileRunning = true;
-        addLine('▶ PlatformIO installieren (pip/get-platformio)…', false);
-        const tryPip = 'python3 -m pip install --user -U platformio 2>&1';
-        exec(tryPip, { timeout: 300000 }, (err, out) => {
-            (out || '').split('\n').forEach(l => { if (l.trim()) addLine(l.trim(), false); });
-            self._detectPlatformIo();
-            if (self.platformIoReady) {
-                addLine('✅ PlatformIO bereit: ' + self._getPlatformIoCmd(), false);
-                self.compileRunning = false;
-                if (cb) cb(null);
-                return;
+        addLine('▶ PlatformIO installieren…', false);
+
+        const fail = (err) => {
+            self.compileRunning = false;
+            if (cb) cb(err || new Error('platformio install failed'));
+        };
+        const succeed = () => {
+            addLine('✅ PlatformIO bereit: ' + self._getPlatformIoCmd(), false);
+            self.compileRunning = false;
+            if (cb) cb(null);
+        };
+
+        self._ensurePythonHostDeps({ addLine, needPip: true, needCurl: true, needGit: false }, (depErr) => {
+            if (depErr) {
+                addLine('❌ PlatformIO-Installation abgebrochen (Host-Abhängigkeiten)', true);
+                return fail(depErr);
             }
-            addLine('▶ Fallback: get-platformio.py …', false);
-            const script =
-                'curl -fsSL https://raw.githubusercontent.com/platformio/platformio-core-installer/master/get-platformio.py -o /tmp/get-platformio.py' +
-                ' && python3 /tmp/get-platformio.py 2>&1';
-            exec(script, { timeout: 600000 }, (err2, out2) => {
-                (out2 || '').split('\n').forEach(l => { if (l.trim()) addLine(l.trim(), false); });
+
+            addLine('▶ PlatformIO via pip…', false);
+            const tryPip = 'python3 -m pip install --user -U platformio 2>&1';
+            exec(tryPip, { timeout: 300000 }, (err, out) => {
+                (out || '').split('\n').forEach(l => { if (l.trim()) addLine(l.trim(), false); });
                 self._detectPlatformIo();
-                self.compileRunning = false;
-                if (self.platformIoReady) {
-                    addLine('✅ PlatformIO bereit: ' + self._getPlatformIoCmd(), false);
-                    if (cb) cb(null);
-                } else {
+                if (self.platformIoReady) return succeed();
+
+                addLine('▶ Fallback: get-platformio.py …', false);
+                const script =
+                    'curl -fsSL https://raw.githubusercontent.com/platformio/platformio-core-installer/master/get-platformio.py -o /tmp/get-platformio.py' +
+                    ' && python3 /tmp/get-platformio.py 2>&1';
+                exec(script, { timeout: 600000 }, (err2, out2) => {
+                    (out2 || '').split('\n').forEach(l => { if (l.trim()) addLine(l.trim(), false); });
+                    self._detectPlatformIo();
+                    if (self.platformIoReady) return succeed();
                     addLine('❌ PlatformIO-Installation fehlgeschlagen', true);
-                    if (cb) cb(new Error('platformio install failed'));
-                }
+                    fail(new Error('platformio install failed'));
+                });
             });
         });
     }
@@ -1127,18 +1275,24 @@ class EspHub extends utils.Adapter {
             return;
         }
 
-        self._log('INFO', 'FLASH', 'Lege esptool venv an unter ' + venv);
-        exec('python3 -m venv ' + venv + ' 2>&1', { timeout: 60000 }, (err1, out1) => {
-            if (err1 || !fs.existsSync(py)) {
-                cb(new Error('venv fehlgeschlagen: ' + String(out1 || err1 && err1.message || '').split('\n')[0]));
+        self._ensurePythonHostDeps({ needPip: false, needCurl: false, needGit: false }, (depErr) => {
+            if (depErr) {
+                cb(new Error('venv fehlgeschlagen: ' + String(depErr.message || depErr)));
                 return;
             }
-            exec(py + ' -m pip install -U pip esptool 2>&1', { timeout: 180000 }, (err2, out2) => {
-                if (err2) {
-                    cb(new Error('pip install esptool fehlgeschlagen: ' + String(out2 || err2.message).split('\n')[0]));
+            self._log('INFO', 'FLASH', 'Lege esptool venv an unter ' + venv);
+            exec('python3 -m venv ' + venv + ' 2>&1', { timeout: 60000 }, (err1, out1) => {
+                if (err1 || !fs.existsSync(py)) {
+                    cb(new Error('venv fehlgeschlagen: ' + String(out1 || err1 && err1.message || '').split('\n')[0]));
                     return;
                 }
-                afterPip();
+                exec(py + ' -m pip install -U pip esptool 2>&1', { timeout: 180000 }, (err2, out2) => {
+                    if (err2) {
+                        cb(new Error('pip install esptool fehlgeschlagen: ' + String(out2 || err2.message).split('\n')[0]));
+                        return;
+                    }
+                    afterPip();
+                });
             });
         });
     }
@@ -1732,8 +1886,10 @@ class EspHub extends utils.Adapter {
             if (!mac || !name) { json({ ok: false, error: 'mac + name erforderlich' }); return; }
             if (this.devices[mac]) {
                 this.devices[mac].name = name;
+                // Stick until device applies reply.name and heartbeats the new value.
+                this.devices[mac].pendingName = name;
                 await this.setStateAsync('devices.' + mac + '.name', name, true).catch(() => {});
-                this._log('INFO', 'DEVICE', 'Umbenannt: ' + mac + ' → ' + name);
+                this._log('INFO', 'DEVICE', 'Umbenannt: ' + mac + ' → ' + name + ' (pending sync)');
                 json({ ok: true });
             } else {
                 json({ ok: false, error: 'Gerät nicht gefunden' });

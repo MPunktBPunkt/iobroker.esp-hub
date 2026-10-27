@@ -1,8 +1,12 @@
 {
   "common": {
     "name": "esp-hub",
-    "version": "0.5.13",
+    "version": "0.5.15",
     "news": {
+      "0.5.14": {
+        "en": "PlatformIO/esptool install: preflight for python3-venv/pip/curl and passwordless apt install when missing",
+        "de": "PlatformIO/esptool-Install: Preflight fuer python3-venv/pip/curl und passwortloses apt bei fehlenden Paketen"
+      },
       "0.5.13": {
         "en": "Compile tab: PlatformIO builds (path/GitHub), firmware names name.version.family.bin, PSRAM board option, freePsram telemetry; optional PIO install (no auto-install)",
         "de": "Kompilieren: PlatformIO-Builds (Pfad/GitHub), Firmware-Namen name.version.family.bin, PSRAM-Board, freePsram; PIO optional per Button (kein Auto-Install)"
@@ -86,6 +90,10 @@
       "0.4.3": {
         "en": "Bugfix: FQBN with partition params now passed as array args to spawn (not string split)",
         "de": "Bugfix: FQBN mit Partition-Parametern wird als Array an spawn uebergeben (nicht String-Split)"
+      },
+      "0.5.15": {
+        "en": "Hub rename sticks until device applies reply.name",
+        "de": "Hub-Umbenennung bleibt bis Gerät reply.name übernimmt"
       }
     },
     "title": "ESP-Hub",
