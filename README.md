@@ -106,8 +106,8 @@ Einheitliches Schema (Chip-Familie am Ende):
 
 | Familie | Beispiel |
 |---|---|
-| `esp32` | `esp-hub-base.1.8.0.esp32.bin` (D1 Mini ESP32 u.ä.) |
-| `esp32s3` | `esp-hub-base.1.8.0.esp32s3.bin` |
+| `esp32` | `esp-hub-base.1.10.5.esp32.bin` (D1 Mini ESP32 u.ä.) |
+| `esp32s3` | `esp-hub-base.1.10.5.esp32s3.bin` |
 
 Kompilieren benennt die `.bin` automatisch so:
 
@@ -120,17 +120,18 @@ Flash und OTA prüfen die Familie gegen den Chip — S3-Firmware lässt sich nic
 
 | Projekt | Version | Dateien |
 |---------|---------|---------|
-| esp-hub-base | 1.8.0 | `esp-hub-base.1.8.0.esp32.bin` / `.esp32s3.bin` |
-| esp32.network | 1.6.6 | `network.1.6.6.esp32.bin` / `.esp32s3.bin` |
-| esp32.webradio | 2.4.0 | `webradio.2.4.0.esp32.bin` / `.esp32s3.bin` |
-| esp32.io-control | 1.6.1 | `io-control.1.6.1.esp32.bin` / `.esp32s3.bin` |
-| esp32.communicator | 1.8.0 | `communicator.1.8.0.esp32.bin` / `.esp32s3.bin` |
-| esp32.MeterMaster | 0.4.3 | `metermaster.0.4.3.esp32.bin` |
-| esp32.rfmonitor | 1.1.0 | `rfmonitor.1.1.0.esp32.bin` / `.esp32s3.bin` |
+| esp-hub-base | 1.10.5 | `esp-hub-base.1.10.5.esp32.bin` / `.esp32s3.bin` |
+| esp32.rfmonitor | 1.10.5 | `rfmonitor.1.10.5.esp32.bin` / `.esp32s3.bin` |
+| esp32.network | 1.7.0 | `network.1.7.0.esp32.bin` / `.esp32s3.bin` |
+| esp32.io-control | 1.7.0 | `io-control.1.7.0.esp32.bin` / `.esp32s3.bin` |
+| esp32.webradio | 2.5.0 | `webradio.2.5.0.esp32.bin` / `.esp32s3.bin` |
+| esp32.communicator | 1.9.0 | `communicator.1.9.0.esp32.bin` / `.esp32s3.bin` |
+| esp32.MeterMaster | 0.5.0 | `metermaster.0.5.0.esp32.bin` |
 | esp32.heartrate | 0.3.2 | `heartrate.0.3.2.esp32.bin` / `.esp32s3.bin` |
 | esp32.ftmsprobe | 0.1.4 | `ftmsprobe.0.1.4.esp32.bin` / `.esp32s3.bin` |
-| esp32.pidrive | 0.4.2-dev | `pidrive.0.4.2-dev.usb.esp32s3.bin` (Flash @0x0) / `pidrive.0.4.2-dev.ota.esp32s3.bin` (OTA) |
-| hu-probe | 0.3.19 | `hu-probe.0.3.19.esp32s3.bin` (Feld 23.10. Identity/Detach) |
+| esp32.ergo | 0.3.23-dev | `ergo.0.3.23-dev.esp32s3.bin` |
+| esp32.pidrive | 0.4.42-dev / 0.4.31-dev | `pidrive.0.4.42-dev.ota.esp32s3.bin` (OTA) / `pidrive.0.4.31-dev.usb.esp32s3.bin` (Flash @0x0) |
+| hu-probe | 0.3.19 | `hu-probe.0.3.19.esp32s3.bin` |
 
 Projektübersicht und Portal-SSIDs: [ESP32.esp-hub](https://github.com/MPunktBPunkt/ESP32.esp-hub).
 
