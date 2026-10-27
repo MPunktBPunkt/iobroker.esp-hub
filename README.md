@@ -127,8 +127,8 @@ Flash und OTA prüfen die Familie gegen den Chip — S3-Firmware lässt sich nic
 | esp32.webradio | 2.5.0 | `webradio.2.5.0.esp32.bin` / `.esp32s3.bin` |
 | esp32.communicator | 1.9.0 | `communicator.1.9.0.esp32.bin` / `.esp32s3.bin` |
 | esp32.MeterMaster | 0.5.0 | `metermaster.0.5.0.esp32.bin` |
-| esp32.heartrate | 0.3.2 | `heartrate.0.3.2.esp32.bin` / `.esp32s3.bin` |
-| esp32.ftmsprobe | 0.1.4 | `ftmsprobe.0.1.4.esp32.bin` / `.esp32s3.bin` |
+| esp32.heartrate | 0.3.3 | `heartrate.0.3.3.esp32.bin` / `.esp32s3.bin` |
+| esp32.ftmsprobe | 0.1.5 | `ftmsprobe.0.1.5.esp32.bin` / `.esp32s3.bin` |
 | esp32.ergo | 0.3.23-dev | `ergo.0.3.23-dev.esp32s3.bin` |
 | esp32.pidrive | 0.4.42-dev / 0.4.31-dev | `pidrive.0.4.42-dev.ota.esp32s3.bin` (OTA) / `pidrive.0.4.31-dev.usb.esp32s3.bin` (Flash @0x0) |
 | hu-probe | 0.3.19 | `hu-probe.0.3.19.esp32s3.bin` |
